@@ -12,6 +12,19 @@ import io
 import time
 import config
 from strategy.sma_crossover import SMACrossover
+from flask import Flask
+import threading
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Alpaca Paper Trader is active and running!"
+
+@app.route("/health")
+def health():
+    return {"status": "healthy"}, 200
+
 
 # ── Alpaca Credentials & Headers ─────────────────────────────────────────────
 HEADERS = {
@@ -151,6 +164,20 @@ def main():
 
     while True:
         try:
+            # Check Eastern Time to see if we should exit (market closed for the day)
+            import zoneinfo
+            et_now = datetime.now(zoneinfo.ZoneInfo("America/New_York"))
+            
+            # Weekend check (Saturday = 5, Sunday = 6)
+            if et_now.weekday() >= 5:
+                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [System] Today is weekend (Eastern Time). Exiting script.")
+                break
+                
+            # Past 4:05 PM ET check (Market closes at 4:00 PM ET)
+            if et_now.hour > 16 or (et_now.hour == 16 and et_now.minute >= 5):
+                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [System] Time is past 4:05 PM ET (Market closed). Exiting script to allow system sleep.")
+                break
+
             # 1. Check if the market is open
             if not is_market_open():
                 print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Clock] US stock market is currently CLOSED. Sleeping for 15 minutes...")
@@ -160,7 +187,10 @@ def main():
             print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Scan] US stock market is OPEN. Running active strategy scan...")
             
             # 2. Fetch latest daily/intraday historical data in bulk to calculate indicators
-            end_dt = datetime.utcnow()
+            # Alpaca's free data feed (IEX) requires a 15-minute delay on queries.
+            # We timezone-localize and subtract 16 minutes to avoid "recent SIP data" errors.
+            from datetime import timezone
+            end_dt = datetime.now(timezone.utc) - timedelta(minutes=16)
             # We download the last 5 days to ensure we have enough bars for the SMA indicators
             start_dt = end_dt - timedelta(days=5)
             
@@ -191,7 +221,7 @@ def main():
                     })
                     df["Date"] = pd.to_datetime(df["Date"])
                     df = df.set_index("Date")
-                    ticker_df = df[["Open", "High", "Low", "Close", "Volume"]]
+                    ticker_df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
                         
                     # 4. Generate signals
                     signals = STRATEGY.generate_signals(ticker_df)
@@ -232,4 +262,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Start the trading loop in a background thread
+    threading.Thread(target=main, daemon=True).start()
+    
+    # Render provides PORT via environment variable
+    import os
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
