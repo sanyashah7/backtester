@@ -76,5 +76,12 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(metrics["Total Trades"], 3)
         self.assertEqual(metrics["Win Rate (%)"], 100.0)
 
+class TestConfig(unittest.TestCase):
+    def test_config_variables(self):
+        import config
+        self.assertTrue(isinstance(config.TICKERS, list))
+        self.assertTrue(len(config.TICKERS) > 0)
+        self.assertEqual(config.MAX_SHARES_PER_TICKER, 50)
+
 if __name__ == "__main__":
     unittest.main()

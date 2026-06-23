@@ -2,7 +2,9 @@
 #  Backtester — Global Configuration
 # ─────────────────────────────────────────────
 
-TICKER        = "AAPL"          # stock  →  "AAPL" | crypto  →  "BTC-USD"
+TICKERS               = ["AAPL", "MSFT", "NVDA"]  # Stocks to trade
+MAX_SHARES_PER_TICKER = 50                        # Max shares to hold per ticker (pyramiding limit)
+TICKER                = TICKERS[0]                # Fallback for single-asset code if needed
 START_DATE    = "2020-01-01"
 END_DATE      = "2024-01-01"
 INTERVAL      = "1d"            # 1d / 1wk / 1mo  (use "1m" for intraday, last 7 days only)

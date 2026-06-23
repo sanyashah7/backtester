@@ -28,7 +28,7 @@ HEADERS = {
 }
 
 # ── Trading Settings ─────────────────────────────────────────────────────────
-TICKER     = config.TICKER       # e.g., "AAPL"
+TICKERS    = config.TICKERS      # e.g., ["AAPL", "MSFT", "NVDA"]
 QTY        = 10                  # Number of shares to trade per signal
 STRATEGY   = SMACrossover(config.SMA_SHORT, config.SMA_LONG)  # Using SMA Crossover
 
@@ -73,21 +73,21 @@ def submit_order(symbol: str, qty: int, side: str):
         print(f"[Error] Order failed: {response.text}")
 
 
-def main():
-    print(f"\n{'═'*60}")
-    print(f"  ALPACA PAPER TRADER | Ticker: {TICKER} | Strategy: {STRATEGY.name}")
-    print(f"{'═'*60}")
+def trade_ticker(ticker: str):
+    print(f"\n{'─'*60}")
+    print(f"  PROCESSING TICKER: {ticker}")
+    print(f"{'─'*60}")
     
     # 1. Fetch latest daily historical data to calculate indicators
     # We download the last 150 days to ensure we have enough data for the 50-day slow SMA
     end_dt = datetime.today()
     start_dt = end_dt - timedelta(days=150)
     
-    print(f"[Data] Fetching recent data from Yahoo Finance...")
-    df = yf.download(TICKER, start=start_dt.strftime("%Y-%m-%d"), end=end_dt.strftime("%Y-%m-%d"), progress=False)
+    print(f"[Data] Fetching recent data for {ticker} from Yahoo Finance...")
+    df = yf.download(ticker, start=start_dt.strftime("%Y-%m-%d"), end=end_dt.strftime("%Y-%m-%d"), progress=False)
     
     if df.empty:
-        print("[Error] No data returned from Yahoo Finance.")
+        print(f"[Error] No data returned for {ticker} from Yahoo Finance.")
         return
 
     # Flatten columns if multi-index
@@ -106,26 +106,39 @@ def main():
     print(f"[Analysis] Current strategy signal: {latest_signal} (1 = BUY, -1 = SELL, 0 = HOLD)")
     
     # 3. Fetch current position from Alpaca
-    current_qty = get_current_position(TICKER)
+    current_qty = get_current_position(ticker)
     
     # 4. Determine trade execution
     if latest_signal == 1:
-        if current_qty == 0:
-            submit_order(TICKER, QTY, "buy")
+        if current_qty < config.MAX_SHARES_PER_TICKER:
+            buy_qty = min(QTY, config.MAX_SHARES_PER_TICKER - current_qty)
+            submit_order(ticker, int(buy_qty), "buy")
         else:
-            print("[Decision] Signal is BUY, but we already hold a position. Holding position.")
+            print(f"[Decision] Signal is BUY, but we reached max limit ({current_qty}/{config.MAX_SHARES_PER_TICKER}). Holding.")
             
     elif latest_signal == -1:
         if current_qty > 0:
-            # Sell the quantity we currently hold
-            submit_order(TICKER, int(current_qty), "sell")
+            # Sell the entire quantity we currently hold
+            submit_order(ticker, int(current_qty), "sell")
         else:
-            print("[Decision] Signal is SELL, but we have no shares to sell. Holding cash.")
+            print(f"[Decision] Signal is SELL, but we have no shares to sell. Holding.")
             
     else:
         print("[Decision] Signal is neutral (HOLD). No actions taken.")
-        
-    print(f"{'═'*60}\n")
+
+
+def main():
+    print(f"\n{'═'*60}")
+    print(f"  ALPACA PAPER TRADER | Tickers: {TICKERS} | Strategy: {STRATEGY.name}")
+    print(f"{'═'*60}")
+    
+    for ticker in TICKERS:
+        try:
+            trade_ticker(ticker)
+        except Exception as e:
+            print(f"[Error] Failed to process ticker {ticker}: {str(e)}")
+            
+    print(f"\n{'═'*60}\n")
 
 
 if __name__ == "__main__":
