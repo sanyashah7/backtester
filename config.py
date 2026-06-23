@@ -1,8 +1,20 @@
 # ─────────────────────────────────────────────
+#  Alpaca Credentials & Endpoints
+# ─────────────────────────────────────────────
+import os
+
+API_KEY               = os.getenv("ALPACA_API_KEY", "PKJSFSR5U6TQZWL6X6NXJH7IS6")
+SECRET_KEY            = os.getenv("ALPACA_SECRET_KEY", "5TNSrSbGNvDTsrSzRH3vikZGPkmRNoW7GxeinT8McCWY")
+APCA_API_BASE_URL     = "https://paper-api.alpaca.markets"
+APCA_API_DATA_URL     = "https://data.alpaca.markets"
+
+# ─────────────────────────────────────────────
 #  Backtester — Global Configuration
 # ─────────────────────────────────────────────
 
-TICKERS               = ["AAPL", "MSFT", "NVDA"]  # Stocks to trade
+USE_SP500             = True                      # True to trade all S&P 500 stocks, False for list below
+TICKERS               = ["AAPL", "MSFT", "NVDA"]  # Fallback stocks if USE_SP500 is False
+BACKTEST_LIMIT        = 5                         # Run historical backtests on the first N stocks to keep it fast
 MAX_SHARES_PER_TICKER = 50                        # Max shares to hold per ticker (pyramiding limit)
 TICKER                = TICKERS[0]                # Fallback for single-asset code if needed
 START_DATE    = "2020-01-01"

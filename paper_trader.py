@@ -2,59 +2,103 @@
 paper_trader.py
 ───────────────
 Executes live paper trading on Alpaca using the SMA Crossover strategy.
-Run this script to check for trading signals and execute paper trades.
+Fetches data and manages positions directly through Alpaca APIs.
 """
 
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-import yfinance as yf
-
+import io
 import config
 from strategy.sma_crossover import SMACrossover
-from strategy.mean_reversion import MeanReversion
 
-import os
-
-# ── Alpaca Paper Trading Credentials ─────────────────────────────────────────
-API_KEY          = os.getenv("ALPACA_API_KEY", "PKJSFSR5U6TQZWL6X6NXJH7IS6")
-SECRET_KEY       = os.getenv("ALPACA_SECRET_KEY", "5TNSrSbGNvDTsrSzRH3vikZGPkmRNoW7GxeinT8McCWY")
-APCA_API_BASE_URL = "https://paper-api.alpaca.markets"
-
+# ── Alpaca Credentials & Headers ─────────────────────────────────────────────
 HEADERS = {
-    "APCA-API-KEY-ID": API_KEY,
-    "APCA-API-SECRET-KEY": SECRET_KEY,
+    "APCA-API-KEY-ID": config.API_KEY,
+    "APCA-API-SECRET-KEY": config.SECRET_KEY,
     "Content-Type": "application/json"
 }
 
 # ── Trading Settings ─────────────────────────────────────────────────────────
-TICKERS    = config.TICKERS      # e.g., ["AAPL", "MSFT", "NVDA"]
 QTY        = 10                  # Number of shares to trade per signal
 STRATEGY   = SMACrossover(config.SMA_SHORT, config.SMA_LONG)  # Using SMA Crossover
 
 
-def get_current_position(symbol: str) -> float:
-    """Check if we already hold a position in the symbol on Alpaca."""
-    url = f"{APCA_API_BASE_URL}/v2/positions/{symbol}"
+def get_sp500_tickers() -> list:
+    """Scrape S&P 500 stock tickers from Wikipedia."""
+    print("[System] Fetching S&P 500 tickers from Wikipedia...")
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            tables = pd.read_html(io.StringIO(r.text))
+            df = tables[0]
+            tickers = df['Symbol'].tolist()
+            # Alpaca uses dots for class shares (e.g. BRK.B)
+            tickers = [t for t in tickers]
+            print(f"[System] Successfully loaded {len(tickers)} S&P 500 tickers.")
+            return tickers
+        else:
+            print(f"[Warning] Failed to fetch Wikipedia page: HTTP {r.status_code}. Using fallback tickers.")
+            return config.TICKERS
+    except Exception as e:
+        print(f"[Warning] Error fetching S&P 500 tickers: {str(e)}. Using fallback tickers.")
+        return config.TICKERS
+
+
+def get_all_positions() -> dict:
+    """Fetch all open positions from Alpaca in a single request."""
+    url = f"{config.APCA_API_BASE_URL}/v2/positions"
     response = requests.get(url, headers=HEADERS)
-    
     if response.status_code == 200:
-        position_data = response.json()
-        qty = float(position_data.get("qty", 0))
-        print(f"[Alpaca] Current position for {symbol}: {qty} shares.")
-        return qty
-    elif response.status_code == 404:
-        # 404 means no position exists
-        print(f"[Alpaca] No active position for {symbol}.")
-        return 0.0
+        positions_list = response.json()
+        positions = {p["symbol"]: float(p["qty"]) for p in positions_list}
+        print(f"[Alpaca] Fetched {len(positions)} active positions.")
+        return positions
     else:
-        print(f"[Error] Failed to fetch position: {response.text}")
-        return 0.0
+        print(f"[Error] Failed to fetch positions: {response.text}")
+        return {}
+
+
+def fetch_alpaca_bars_bulk(tickers: list, start: str, end: str) -> dict:
+    """Download historical daily bars for a list of tickers from Alpaca in bulk."""
+    print(f"[Data] Fetching recent data for {len(tickers)} tickers in bulk from Alpaca...")
+    
+    url = f"{config.APCA_API_DATA_URL}/v2/stocks/bars"
+    all_bars = {}
+    
+    # Chunk tickers list into groups of 100 (Alpaca's limit per request)
+    chunk_size = 100
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i : i + chunk_size]
+        symbols_str = ",".join(chunk)
+        
+        params = {
+            "symbols": symbols_str,
+            "timeframe": "1Day",
+            "start": start,
+            "end": end,
+            "limit": 1000,
+            "adjustment": "all"
+        }
+        
+        try:
+            response = requests.get(url, headers=HEADERS, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                bars_chunk = data.get("bars", {})
+                all_bars.update(bars_chunk)
+            else:
+                print(f"[Warning] Failed to fetch chunk from Alpaca: {response.text}")
+        except Exception as e:
+            print(f"[Warning] Error fetching bulk chunk: {str(e)}")
+            
+    return all_bars
 
 
 def submit_order(symbol: str, qty: int, side: str):
     """Submit a market order to Alpaca paper trading."""
-    url = f"{APCA_API_BASE_URL}/v2/orders"
+    url = f"{config.APCA_API_BASE_URL}/v2/orders"
     data = {
         "symbol": symbol,
         "qty": str(qty),
@@ -70,71 +114,79 @@ def submit_order(symbol: str, qty: int, side: str):
         order_info = response.json()
         print(f"[Success] Order submitted! ID: {order_info.get('id')}, Status: {order_info.get('status')}")
     else:
-        print(f"[Error] Order failed: {response.text}")
-
-
-def trade_ticker(ticker: str):
-    print(f"\n{'─'*60}")
-    print(f"  PROCESSING TICKER: {ticker}")
-    print(f"{'─'*60}")
-    
-    # 1. Fetch latest daily historical data to calculate indicators
-    # We download the last 150 days to ensure we have enough data for the 50-day slow SMA
-    end_dt = datetime.today()
-    start_dt = end_dt - timedelta(days=150)
-    
-    print(f"[Data] Fetching recent data for {ticker} from Yahoo Finance...")
-    df = yf.download(ticker, start=start_dt.strftime("%Y-%m-%d"), end=end_dt.strftime("%Y-%m-%d"), progress=False)
-    
-    if df.empty:
-        print(f"[Error] No data returned for {ticker} from Yahoo Finance.")
-        return
-
-    # Flatten columns if multi-index
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    # 2. Generate signals
-    df_copy = df.copy()
-    signals = STRATEGY.generate_signals(df_copy)
-    
-    latest_date = df_copy.index[-1]
-    latest_close = float(df_copy["Close"].iloc[-1])
-    latest_signal = int(signals.iloc[-1])
-    
-    print(f"[Analysis] Latest data date: {latest_date.date()} | Close price: ${latest_close:.2f}")
-    print(f"[Analysis] Current strategy signal: {latest_signal} (1 = BUY, -1 = SELL, 0 = HOLD)")
-    
-    # 3. Fetch current position from Alpaca
-    current_qty = get_current_position(ticker)
-    
-    # 4. Determine trade execution
-    if latest_signal == 1:
-        if current_qty < config.MAX_SHARES_PER_TICKER:
-            buy_qty = min(QTY, config.MAX_SHARES_PER_TICKER - current_qty)
-            submit_order(ticker, int(buy_qty), "buy")
-        else:
-            print(f"[Decision] Signal is BUY, but we reached max limit ({current_qty}/{config.MAX_SHARES_PER_TICKER}). Holding.")
-            
-    elif latest_signal == -1:
-        if current_qty > 0:
-            # Sell the entire quantity we currently hold
-            submit_order(ticker, int(current_qty), "sell")
-        else:
-            print(f"[Decision] Signal is SELL, but we have no shares to sell. Holding.")
-            
-    else:
-        print("[Decision] Signal is neutral (HOLD). No actions taken.")
+        print(f"[Error] Order failed for {symbol}: {response.text}")
 
 
 def main():
+    # Load tickers list
+    if config.USE_SP500:
+        tickers_list = get_sp500_tickers()
+    else:
+        tickers_list = config.TICKERS
+
     print(f"\n{'═'*60}")
-    print(f"  ALPACA PAPER TRADER | Tickers: {TICKERS} | Strategy: {STRATEGY.name}")
+    print(f"  ALPACA PAPER TRADER | Tickers Count: {len(tickers_list)} | Strategy: {STRATEGY.name}")
     print(f"{'═'*60}")
     
-    for ticker in TICKERS:
+    # 1. Fetch latest daily historical data in bulk to calculate indicators
+    end_dt = datetime.today()
+    start_dt = end_dt - timedelta(days=150)
+    
+    # Convert start and end times to ISO format
+    start_str = start_dt.strftime("%Y-%m-%dT00:00:00Z")
+    end_str = end_dt.strftime("%Y-%m-%dT00:00:00Z")
+    
+    bulk_bars = fetch_alpaca_bars_bulk(tickers_list, start_str, end_str)
+    
+    # 2. Get active positions to prevent sequential API spamming
+    positions = get_all_positions()
+
+    for ticker in tickers_list:
         try:
-            trade_ticker(ticker)
+            # Extract ticker-specific columns from the bulk download data
+            ticker_bars = bulk_bars.get(ticker, [])
+            if not ticker_bars or len(ticker_bars) < config.SMA_LONG:
+                continue
+                
+            df = pd.DataFrame(ticker_bars)
+            df = df.rename(columns={
+                "t": "Date",
+                "o": "Open",
+                "h": "High",
+                "l": "Low",
+                "c": "Close",
+                "v": "Volume"
+            })
+            df["Date"] = pd.to_datetime(df["Date"])
+            df = df.set_index("Date")
+            ticker_df = df[["Open", "High", "Low", "Close", "Volume"]]
+                
+            # 3. Generate signals
+            signals = STRATEGY.generate_signals(ticker_df)
+            
+            latest_date = ticker_df.index[-1]
+            latest_close = float(ticker_df["Close"].iloc[-1])
+            latest_signal = int(signals.iloc[-1])
+            
+            # For 500 stocks, we only log when a transaction signal is active (BUY or SELL)
+            # to prevent spamming the output console.
+            if latest_signal in [1, -1]:
+                current_qty = positions.get(ticker, 0.0)
+                
+                if latest_signal == 1:
+                    if current_qty < config.MAX_SHARES_PER_TICKER:
+                        buy_qty = min(QTY, config.MAX_SHARES_PER_TICKER - current_qty)
+                        print(f"\n[Signal] {ticker}: {latest_date.date()} | Close: ${latest_close:.2f} | Signal: BUY")
+                        print(f"[Alpaca] Current position for {ticker}: {current_qty} shares.")
+                        submit_order(ticker, int(buy_qty), "buy")
+                    # Do not print anything if we already reached limit (saves console noise)
+                        
+                elif latest_signal == -1:
+                    if current_qty > 0:
+                        print(f"\n[Signal] {ticker}: {latest_date.date()} | Close: ${latest_close:.2f} | Signal: SELL")
+                        print(f"[Alpaca] Current position for {ticker}: {current_qty} shares.")
+                        submit_order(ticker, int(current_qty), "sell")
+            
         except Exception as e:
             print(f"[Error] Failed to process ticker {ticker}: {str(e)}")
             

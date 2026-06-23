@@ -70,13 +70,41 @@ def print_comparison(results: dict):
     print(f"{'═'*60}\n")
 
 
+def get_sp500_tickers() -> list:
+    """Scrape S&P 500 stock tickers from Wikipedia."""
+    print("[System] Fetching S&P 500 tickers from Wikipedia for backtesting...")
+    try:
+        import requests, io
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            tables = pd.read_html(io.StringIO(r.text))
+            df = tables[0]
+            tickers = df['Symbol'].tolist()
+            tickers = [t for t in tickers]
+            return tickers
+        else:
+            print(f"[Warning] Failed to fetch Wikipedia page: HTTP {r.status_code}. Using fallback tickers.")
+            return config.TICKERS
+    except Exception as e:
+        print(f"[Warning] Error fetching S&P 500 tickers: {str(e)}. Using fallback tickers.")
+        return config.TICKERS
+
+
 def main():
+    if config.USE_SP500:
+        full_list = get_sp500_tickers()
+        tickers_list = full_list[:config.BACKTEST_LIMIT]
+        print(f"[System] S&P 500 enabled. Running backtest on the first {len(tickers_list)} tickers to keep it fast.")
+    else:
+        tickers_list = config.TICKERS
+
     print(f"\n{'═'*55}")
-    print(f"  BACKTESTER  |  {config.TICKERS}  |  {config.START_DATE} → {config.END_DATE}")
+    print(f"  BACKTESTER  |  Tickers: {tickers_list}  |  {config.START_DATE} → {config.END_DATE}")
     print(f"  Capital: ${config.INITIAL_CASH:,}  |  Commission: {config.COMMISSION*100}%  |  Slippage: {config.SLIPPAGE*100}%")
     print(f"{'═'*55}")
 
-    for ticker in config.TICKERS:
+    for ticker in tickers_list:
         print(f"\n{'═'*55}")
         print(f"  BACKTESTING TICKER: {ticker}")
         print(f"{'═'*55}")
