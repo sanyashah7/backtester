@@ -162,6 +162,10 @@ def main():
     
     print("[System] Active trading loop started. Press Ctrl+C to terminate.")
 
+    # Track the last bar timestamp we executed a trade on for each ticker,
+    # to avoid placing multiple orders during the same 5-minute bar.
+    last_traded_bar = {}
+
     while True:
         try:
             # Check Eastern Time to see if we should exit (market closed for the day)
@@ -232,6 +236,10 @@ def main():
                     
                     # For 500 stocks, we only log when a transaction signal is active (BUY or SELL)
                     if latest_signal in [1, -1]:
+                        # Skip if we already submitted an order for this 5-minute candle
+                        if last_traded_bar.get(ticker) == latest_date:
+                            continue
+                            
                         current_qty = positions.get(ticker, 0.0)
                         
                         if latest_signal == 1:
@@ -240,12 +248,14 @@ def main():
                                 print(f"[Signal] {ticker}: {latest_date} | Close: ${latest_close:.2f} | Signal: BUY")
                                 print(f"[Alpaca] Current position for {ticker}: {current_qty} shares.")
                                 submit_order(ticker, int(buy_qty), "buy")
+                                last_traded_bar[ticker] = latest_date
                                 
                         elif latest_signal == -1:
                             if current_qty > 0:
                                 print(f"[Signal] {ticker}: {latest_date} | Close: ${latest_close:.2f} | Signal: SELL")
                                 print(f"[Alpaca] Current position for {ticker}: {current_qty} shares.")
                                 submit_order(ticker, int(current_qty), "sell")
+                                last_traded_bar[ticker] = latest_date
                     
                 except Exception as e:
                     print(f"[Error] Failed to process ticker {ticker}: {str(e)}")

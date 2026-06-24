@@ -39,14 +39,18 @@ class SMACrossover(Strategy):
         sma_short  = close.rolling(self.short_window).mean()
         sma_long   = close.rolling(self.long_window).mean()
 
-        signal = pd.Series(0, index=data.index, dtype=int)
+        # Define state: 1 when short > long, -1 when short <= long
+        state = pd.Series(-1, index=data.index, dtype=int)
+        state[sma_short > sma_long] = 1
 
-        # +1 when fast is above slow, -1 when fast is below slow
-        signal[sma_short >  sma_long] =  1
-        signal[sma_short <= sma_long] = -1
-
-        # Only emit a signal on the crossover bar (change point), hold otherwise
-        position = signal.copy()
+        # Only emit a signal on the crossover bar (change point), hold (0) otherwise
+        # Transition from -1 to 1 yields diff = +2 (BUY)
+        # Transition from 1 to -1 yields diff = -2 (SELL)
+        diff = state.diff().fillna(0).astype(int)
+        
+        position = pd.Series(0, index=data.index, dtype=int)
+        position[diff == 2] = 1
+        position[diff == -2] = -1
 
         # Attach the indicator columns to the data for charting
         data["SMA_Short"] = sma_short

@@ -54,9 +54,10 @@ class TestStrategies(unittest.TestCase):
         signals = strategy.generate_signals(data)
         
         self.assertEqual(len(signals), 10)
-        # Fast SMA (2-day) should exceed slow SMA (4-day) as prices rise
-        # Once both can be calculated (index >= 3), signal should be 1
-        self.assertEqual(signals.iloc[-1], 1)
+        # Crossover should trigger on index 3 (first bar where both SMAs can be calculated and fast > slow)
+        self.assertEqual(signals.iloc[3], 1)
+        # Subsequent bars should hold (0) as fast SMA remains above slow SMA
+        self.assertEqual(signals.iloc[-1], 0)
 
 class TestMetrics(unittest.TestCase):
     def test_metrics_calculation(self):
