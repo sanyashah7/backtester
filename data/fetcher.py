@@ -49,7 +49,8 @@ def fetch_data(ticker: str, start: str, end: str, interval: str = "1d") -> pd.Da
         "start": start_dt,
         "end": end_dt,
         "limit": 10000,
-        "adjustment": "all"
+        "adjustment": "all",
+        "feed": "iex"
     }
     
     response = requests.get(url, headers=headers, params=params)

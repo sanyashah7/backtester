@@ -87,7 +87,7 @@ def get_all_positions() -> dict:
 
 
 def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) -> dict:
-    """Download historical daily/intraday bars for a list of tickers from Alpaca in bulk."""
+    """Download historical daily/intraday bars for a list of tickers from Alpaca in bulk with pagination."""
     print(f"[Data] Fetching recent {timeframe} bars for {len(tickers)} tickers in bulk from Alpaca...")
     
     url = f"{config.APCA_API_DATA_URL}/v2/stocks/bars"
@@ -101,26 +101,44 @@ def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) 
         symbols_str = ",".join(chunk)
         chunk_num = i // chunk_size + 1
         
-        params = {
-            "symbols": symbols_str,
-            "timeframe": timeframe,
-            "start": start,
-            "end": end,
-            "limit": 1000,
-            "adjustment": "all"
-        }
+        print(f"[Data] Fetching chunk {chunk_num}/{total_chunks} ({len(chunk)} tickers)...")
+        page_token = None
         
-        try:
-            print(f"[Data] Fetching chunk {chunk_num}/{total_chunks} ({len(chunk)} tickers)...")
-            response = requests.get(url, headers=HEADERS, params=params, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                bars_chunk = data.get("bars", {})
-                all_bars.update(bars_chunk)
-            else:
-                print(f"[Warning] Failed to fetch chunk {chunk_num} from Alpaca: {response.text}")
-        except Exception as e:
-            print(f"[Warning] Error fetching bulk chunk {chunk_num}: {str(e)}")
+        while True:
+            params = {
+                "symbols": symbols_str,
+                "timeframe": timeframe,
+                "start": start,
+                "end": end,
+                "limit": 10000,
+                "adjustment": "all",
+                "feed": "iex"
+            }
+            if page_token:
+                params["page_token"] = page_token
+                
+            try:
+                response = requests.get(url, headers=HEADERS, params=params, timeout=15)
+                if response.status_code == 200:
+                    data = response.json()
+                    bars_chunk = data.get("bars", {})
+                    
+                    # Merge chunk bars
+                    for sym, bars_list in bars_chunk.items():
+                        if sym in all_bars:
+                            all_bars[sym].extend(bars_list)
+                        else:
+                            all_bars[sym] = bars_list
+                            
+                    page_token = data.get("next_page_token")
+                    if not page_token:
+                        break
+                else:
+                    print(f"[Warning] Failed to fetch chunk {chunk_num} from Alpaca: {response.text}")
+                    break
+            except Exception as e:
+                print(f"[Warning] Error fetching bulk chunk {chunk_num}: {str(e)}")
+                break
             
     print(f"[Data] Bulk fetch completed. Got bars for {len(all_bars)} / {len(tickers)} tickers.")
     return all_bars
