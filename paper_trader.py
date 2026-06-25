@@ -39,24 +39,15 @@ STRATEGY   = SMACrossover(config.SMA_SHORT, config.SMA_LONG)  # Using SMA Crosso
 
 
 def get_sp500_tickers() -> list:
-    """Scrape S&P 500 stock tickers from Wikipedia."""
-    print("[System] Fetching S&P 500 tickers from Wikipedia...")
+    """Load S&P 500 stock tickers from local file."""
+    print("[System] Loading S&P 500 tickers from local file data/sp500.txt...")
     try:
-        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if r.status_code == 200:
-            tables = pd.read_html(io.StringIO(r.text))
-            df = tables[0]
-            tickers = df['Symbol'].tolist()
-            # Alpaca uses dots for class shares (e.g. BRK.B)
-            tickers = [t for t in tickers]
-            print(f"[System] Successfully loaded {len(tickers)} S&P 500 tickers.")
-            return tickers
-        else:
-            print(f"[Warning] Failed to fetch Wikipedia page: HTTP {r.status_code}. Using fallback tickers.")
-            return config.TICKERS
+        with open("data/sp500.txt", "r") as f:
+            tickers = [line.strip() for line in f if line.strip()]
+        print(f"[System] Successfully loaded {len(tickers)} S&P 500 tickers from local file.")
+        return tickers
     except Exception as e:
-        print(f"[Warning] Error fetching S&P 500 tickers: {str(e)}. Using fallback tickers.")
+        print(f"[Warning] Error reading local S&P 500 file: {str(e)}. Using fallback tickers.")
         return config.TICKERS
 
 
