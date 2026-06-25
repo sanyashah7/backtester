@@ -265,11 +265,19 @@ def main():
                         if latest_signal == 1:
                             buy_count += 1
                             if current_qty < config.MAX_SHARES_PER_TICKER:
+                                # Portfolio size check:
+                                # If we don't own this ticker yet (current_qty == 0), and we are already at or above MAX_PORTFOLIO_SIZE, skip!
+                                if current_qty == 0 and len(positions) >= config.MAX_PORTFOLIO_SIZE:
+                                    print(f"[Scan] Skipping BUY for {ticker} because portfolio limit is reached ({len(positions)} / {config.MAX_PORTFOLIO_SIZE} positions).")
+                                    continue
+                                    
                                 buy_qty = min(QTY, config.MAX_SHARES_PER_TICKER - current_qty)
                                 print(f"[Signal] {ticker}: {latest_date} | Close: ${latest_close:.2f} | Signal: BUY")
                                 print(f"[Alpaca] Current position for {ticker}: {current_qty} shares.")
                                 submit_order(ticker, int(buy_qty), "buy")
                                 last_traded_bar[ticker] = latest_date
+                                # Update positions dictionary so subsequent ticks in the same scan count this new position
+                                positions[ticker] = buy_qty
                                 
                         elif latest_signal == -1:
                             sell_count += 1
