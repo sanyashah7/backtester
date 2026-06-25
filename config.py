@@ -36,3 +36,10 @@ SMA_LONG      = 50              # slow moving-average window (days)
 MR_WINDOW     = 20              # rolling mean / std look-back window
 MR_Z_ENTRY    = -1.5            # z-score threshold to BUY  (price too low)
 MR_Z_EXIT     =  0.5            # z-score threshold to SELL (price recovered)
+
+# ── Optimization Parameters ───────────────────
+LEVERAGE_MULTIPLIER    = 2.0    # Leverage multiplier for position sizing (e.g. 2.0 for 2x leverage)
+PRICE_CHANGE_THRESHOLD = 1.5    # Minimum daily price change % for buy setups
+TARGET1                = 2.0    # Profit target 1 % (sells first 50%)
+TARGET2                = 4.0    # Profit target 2 % (sells remaining 50%)
+
