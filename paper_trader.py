@@ -168,20 +168,6 @@ def main():
 
     while True:
         try:
-            # Check Eastern Time to see if we should exit (market closed for the day)
-            import zoneinfo
-            et_now = datetime.now(zoneinfo.ZoneInfo("America/New_York"))
-            
-            # Weekend check (Saturday = 5, Sunday = 6)
-            if et_now.weekday() >= 5:
-                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [System] Today is weekend (Eastern Time). Exiting script.")
-                break
-                
-            # Past 4:05 PM ET check (Market closes at 4:00 PM ET)
-            if et_now.hour > 16 or (et_now.hour == 16 and et_now.minute >= 5):
-                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [System] Time is past 4:05 PM ET (Market closed). Exiting script to allow system sleep.")
-                break
-
             # 1. Check if the market is open
             if not is_market_open():
                 print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Clock] US stock market is currently CLOSED. Sleeping for 15 minutes...")
