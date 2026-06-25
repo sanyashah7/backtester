@@ -12,7 +12,7 @@ APCA_API_DATA_URL     = "https://data.alpaca.markets"
 #  Backtester — Global Configuration
 # ─────────────────────────────────────────────
 
-USE_SP500             = True                      # True to trade all S&P 500 stocks, False for list below
+USE_SP500             = False                     # True to trade all S&P 500 stocks, False for list below
 TICKERS               = ["AAPL", "MSFT", "NVDA"]  # Fallback stocks if USE_SP500 is False
 BACKTEST_LIMIT        = 5                         # Run historical backtests on the first N stocks to keep it fast
 MAX_SHARES_PER_TICKER = 50                        # Max shares to hold per ticker (pyramiding limit)

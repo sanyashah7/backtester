@@ -43,7 +43,7 @@ def get_sp500_tickers() -> list:
     print("[System] Fetching S&P 500 tickers from Wikipedia...")
     try:
         url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         if r.status_code == 200:
             tables = pd.read_html(io.StringIO(r.text))
             df = tables[0]
@@ -64,7 +64,7 @@ def is_market_open() -> bool:
     """Query Alpaca Clock API to check if the US stock market is currently open."""
     url = f"{config.APCA_API_BASE_URL}/v2/clock"
     try:
-        response = requests.get(url, headers=HEADERS)
+        response = requests.get(url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
             clock_data = response.json()
             is_open = clock_data.get("is_open", False)
@@ -80,14 +80,18 @@ def is_market_open() -> bool:
 def get_all_positions() -> dict:
     """Fetch all open positions from Alpaca in a single request."""
     url = f"{config.APCA_API_BASE_URL}/v2/positions"
-    response = requests.get(url, headers=HEADERS)
-    if response.status_code == 200:
-        positions_list = response.json()
-        positions = {p["symbol"]: float(p["qty"]) for p in positions_list}
-        print(f"[Alpaca] Fetched {len(positions)} active positions.")
-        return positions
-    else:
-        print(f"[Error] Failed to fetch positions: {response.text}")
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        if response.status_code == 200:
+            positions_list = response.json()
+            positions = {p["symbol"]: float(p["qty"]) for p in positions_list}
+            print(f"[Alpaca] Fetched {len(positions)} active positions.")
+            return positions
+        else:
+            print(f"[Error] Failed to fetch positions: {response.text}")
+            return {}
+    except Exception as e:
+        print(f"[Error] Exception when fetching positions: {str(e)}")
         return {}
 
 
@@ -100,9 +104,11 @@ def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) 
     
     # Chunk tickers list into groups of 100 (Alpaca's limit per request)
     chunk_size = 100
+    total_chunks = (len(tickers) + chunk_size - 1) // chunk_size
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i : i + chunk_size]
         symbols_str = ",".join(chunk)
+        chunk_num = i // chunk_size + 1
         
         params = {
             "symbols": symbols_str,
@@ -114,16 +120,18 @@ def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) 
         }
         
         try:
-            response = requests.get(url, headers=HEADERS, params=params)
+            print(f"[Data] Fetching chunk {chunk_num}/{total_chunks} ({len(chunk)} tickers)...")
+            response = requests.get(url, headers=HEADERS, params=params, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 bars_chunk = data.get("bars", {})
                 all_bars.update(bars_chunk)
             else:
-                print(f"[Warning] Failed to fetch chunk from Alpaca: {response.text}")
+                print(f"[Warning] Failed to fetch chunk {chunk_num} from Alpaca: {response.text}")
         except Exception as e:
-            print(f"[Warning] Error fetching bulk chunk: {str(e)}")
+            print(f"[Warning] Error fetching bulk chunk {chunk_num}: {str(e)}")
             
+    print(f"[Data] Bulk fetch completed. Got bars for {len(all_bars)} / {len(tickers)} tickers.")
     return all_bars
 
 
@@ -139,13 +147,15 @@ def submit_order(symbol: str, qty: int, side: str):
     }
     
     print(f"[Alpaca] Submitting {side.upper()} order for {qty} shares of {symbol}...")
-    response = requests.post(url, headers=HEADERS, json=data)
-    
-    if response.status_code == 200 or response.status_code == 201:
-        order_info = response.json()
-        print(f"[Success] Order submitted! ID: {order_info.get('id')}, Status: {order_info.get('status')}")
-    else:
-        print(f"[Error] Order failed for {symbol}: {response.text}")
+    try:
+        response = requests.post(url, headers=HEADERS, json=data, timeout=10)
+        if response.status_code in [200, 201]:
+            order_info = response.json()
+            print(f"[Success] Order submitted! ID: {order_info.get('id')}, Status: {order_info.get('status')}")
+        else:
+            print(f"[Error] Order failed for {symbol}: {response.text}")
+    except Exception as e:
+        print(f"[Error] Exception during order submission for {symbol}: {str(e)}")
 
 
 def main():
@@ -193,11 +203,17 @@ def main():
             # 3. Get active positions to prevent sequential API spamming
             positions = get_all_positions()
 
+            buy_count = 0
+            sell_count = 0
+            hold_count = 0
+            skip_count = 0
+
             for ticker in tickers_list:
                 try:
                     # Extract ticker-specific columns from the bulk download data
                     ticker_bars = bulk_bars.get(ticker, [])
                     if not ticker_bars or len(ticker_bars) < config.SMA_LONG:
+                        skip_count += 1
                         continue
                         
                     df = pd.DataFrame(ticker_bars)
@@ -220,6 +236,15 @@ def main():
                     latest_close = float(ticker_df["Close"].iloc[-1])
                     latest_signal = int(signals.iloc[-1])
                     
+                    # Print detailed indicators for small lists of tickers to help user debug
+                    if len(tickers_list) <= 10:
+                        sma20 = float(ticker_df["SMA_Short"].iloc[-1])
+                        sma50 = float(ticker_df["SMA_Long"].iloc[-1])
+                        print(f"  └─ {ticker:<5} | Close: ${latest_close:7.2f} | SMA20: ${sma20:7.2f} | SMA50: ${sma50:7.2f} | Signal: {latest_signal:>2}")
+
+                    if latest_signal == 0:
+                        hold_count += 1
+                    
                     # For 500 stocks, we only log when a transaction signal is active (BUY or SELL)
                     if latest_signal in [1, -1]:
                         # Skip if we already submitted an order for this 5-minute candle
@@ -229,6 +254,7 @@ def main():
                         current_qty = positions.get(ticker, 0.0)
                         
                         if latest_signal == 1:
+                            buy_count += 1
                             if current_qty < config.MAX_SHARES_PER_TICKER:
                                 buy_qty = min(QTY, config.MAX_SHARES_PER_TICKER - current_qty)
                                 print(f"[Signal] {ticker}: {latest_date} | Close: ${latest_close:.2f} | Signal: BUY")
@@ -237,6 +263,7 @@ def main():
                                 last_traded_bar[ticker] = latest_date
                                 
                         elif latest_signal == -1:
+                            sell_count += 1
                             if current_qty > 0:
                                 print(f"[Signal] {ticker}: {latest_date} | Close: ${latest_close:.2f} | Signal: SELL")
                                 print(f"[Alpaca] Current position for {ticker}: {current_qty} shares.")
@@ -245,6 +272,8 @@ def main():
                     
                 except Exception as e:
                     print(f"[Error] Failed to process ticker {ticker}: {str(e)}")
+                    
+            print(f"[Scan] Scan complete. Summary: {buy_count} BUY, {sell_count} SELL, {hold_count} HOLD, {skip_count} skipped.")
                     
             print(f"[Scan] Scan complete. Sleeping for {config.POLL_INTERVAL_SECONDS} seconds...")
             time.sleep(config.POLL_INTERVAL_SECONDS)
@@ -263,5 +292,5 @@ if __name__ == "__main__":
     
     # Render provides PORT via environment variable
     import os
-    port = int(os.getenv("PORT", 5000))
+    port = int(os.getenv("PORT", 5001))
     app.run(host="0.0.0.0", port=port)
