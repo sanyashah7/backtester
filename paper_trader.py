@@ -81,9 +81,20 @@ def get_all_positions() -> dict:
         else:
             print(f"[Error] Failed to fetch positions: {response.text}")
             return {}
+def get_account_equity() -> float:
+    """Fetch total account equity from Alpaca."""
+    url = f"{config.APCA_API_BASE_URL}/v2/account"
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        if response.status_code == 200:
+            account_data = response.json()
+            return float(account_data.get("equity", 100000.0))
+        else:
+            print(f"[Error] Failed to fetch account: {response.text}")
+            return 100000.0
     except Exception as e:
-        print(f"[Error] Exception when fetching positions: {str(e)}")
-        return {}
+        print(f"[Error] Exception when fetching account: {str(e)}")
+        return 100000.0
 
 
 def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) -> dict:
@@ -264,17 +275,25 @@ def main():
                         
                         if latest_signal == 1:
                             buy_count += 1
-                            if current_qty < config.MAX_SHARES_PER_TICKER:
+                            if current_qty == 0:
                                 # Portfolio size check:
-                                # If we don't own this ticker yet (current_qty == 0), and we are already at or above MAX_PORTFOLIO_SIZE, skip!
-                                if current_qty == 0 and len(positions) >= config.MAX_PORTFOLIO_SIZE:
+                                # If we don't own this ticker yet, and we are already at or above MAX_PORTFOLIO_SIZE, skip!
+                                if len(positions) >= config.MAX_PORTFOLIO_SIZE:
                                     print(f"[Scan] Skipping BUY for {ticker} because portfolio limit is reached ({len(positions)} / {config.MAX_PORTFOLIO_SIZE} positions).")
                                     continue
                                     
-                                buy_qty = min(QTY, config.MAX_SHARES_PER_TICKER - current_qty)
+                                # Dynamic Equal-Allocation Sizing:
+                                equity = get_account_equity()
+                                target_value = equity / config.MAX_PORTFOLIO_SIZE
+                                buy_qty = int(target_value // latest_close)
+                                
+                                if buy_qty < 1:
+                                    print(f"[Scan] Skipping BUY for {ticker} because price ${latest_close:.2f} is higher than allocation ${target_value:.2f}.")
+                                    continue
+                                    
                                 print(f"[Signal] {ticker}: {latest_date} | Close: ${latest_close:.2f} | Signal: BUY")
-                                print(f"[Alpaca] Current position for {ticker}: {current_qty} shares.")
-                                submit_order(ticker, int(buy_qty), "buy")
+                                print(f"[Alpaca] Target allocation: ${target_value:.2f} ({buy_qty} shares).")
+                                submit_order(ticker, buy_qty, "buy")
                                 last_traded_bar[ticker] = latest_date
                                 # Update positions dictionary so subsequent ticks in the same scan count this new position
                                 positions[ticker] = buy_qty
