@@ -105,61 +105,58 @@ def get_account_equity() -> float:
 
 
 def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) -> dict:
-    """Download historical daily/intraday bars for a list of tickers from Alpaca in bulk with pagination."""
-    print(f"[Data] Fetching recent {timeframe} bars for {len(tickers)} tickers in bulk from Alpaca...")
+    """Download historical daily/intraday bars for a list of tickers from Yahoo Finance in bulk."""
+    import yfinance as yf
     
-    url = f"{config.APCA_API_DATA_URL}/v2/stocks/bars"
-    all_bars = {}
+    # Map timeframe to yfinance interval
+    yf_interval = "5m"
+    if timeframe == "1Min" or timeframe == "1m":
+        yf_interval = "1m"
+    elif timeframe == "5Min" or timeframe == "5m":
+        yf_interval = "5m"
+    elif timeframe == "15Min" or timeframe == "15m":
+        yf_interval = "15m"
+    elif timeframe == "1Day" or timeframe == "1d":
+        yf_interval = "1d"
+        
+    start_dt = pd.to_datetime(start)
+    end_dt = pd.to_datetime(end)
     
-    # Chunk tickers list into groups of 100 (Alpaca's limit per request)
-    chunk_size = 100
-    total_chunks = (len(tickers) + chunk_size - 1) // chunk_size
-    for i in range(0, len(tickers), chunk_size):
-        chunk = tickers[i : i + chunk_size]
-        symbols_str = ",".join(chunk)
-        chunk_num = i // chunk_size + 1
-        
-        print(f"[Data] Fetching chunk {chunk_num}/{total_chunks} ({len(chunk)} tickers)...")
-        page_token = None
-        
-        while True:
-            params = {
-                "symbols": symbols_str,
-                "timeframe": timeframe,
-                "start": start,
-                "end": end,
-                "limit": 10000,
-                "adjustment": "all",
-                "feed": "iex"
-            }
-            if page_token:
-                params["page_token"] = page_token
-                
-            try:
-                response = requests.get(url, headers=HEADERS, params=params, timeout=15)
-                if response.status_code == 200:
-                    data = response.json()
-                    bars_chunk = data.get("bars", {})
-                    
-                    # Merge chunk bars
-                    for sym, bars_list in bars_chunk.items():
-                        if sym in all_bars:
-                            all_bars[sym].extend(bars_list)
-                        else:
-                            all_bars[sym] = bars_list
-                            
-                    page_token = data.get("next_page_token")
-                    if not page_token:
-                        break
-                else:
-                    print(f"[Warning] Failed to fetch chunk {chunk_num} from Alpaca: {response.text}")
-                    break
-            except Exception as e:
-                print(f"[Warning] Error fetching bulk chunk {chunk_num}: {str(e)}")
-                break
+    print(f"[YahooData] Fetching recent {yf_interval} bars for {len(tickers)} tickers in bulk from Yahoo Finance...")
+    
+    try:
+        # Download in bulk
+        df = yf.download(tickers, start=start_dt, end=end_dt, interval=yf_interval)
+        if df.empty:
+            print("[Warning] Yahoo Finance returned empty DataFrame.")
+            return {}
             
-    print(f"[Data] Bulk fetch completed. Got bars for {len(all_bars)} / {len(tickers)} tickers.")
-    return all_bars
+        all_bars = {}
+        for ticker in tickers:
+            if ticker in df.columns.get_level_values('Ticker'):
+                # Extract the columns for this ticker
+                ticker_df = df.xs(ticker, level='Ticker', axis=1).dropna(how='all')
+                
+                bars = []
+                for dt, row in ticker_df.iterrows():
+                    if pd.isna(row["Close"]):
+                        continue
+                    bars.append({
+                        "t": dt.isoformat(),
+                        "o": float(row["Open"]),
+                        "h": float(row["High"]),
+                        "l": float(row["Low"]),
+                        "c": float(row["Close"]),
+                        "v": int(row["Volume"]) if not pd.isna(row["Volume"]) else 0
+                    })
+                all_bars[ticker] = bars
+                
+        print(f"[YahooData] Bulk fetch completed. Got bars for {len(all_bars)} / {len(tickers)} tickers.")
+        return all_bars
+        
+    except Exception as e:
+        print(f"[Error] Yahoo Finance bulk download failed: {str(e)}")
+        return {}
 
 
 def submit_order(symbol: str, qty: int, side: str):
@@ -215,7 +212,7 @@ def main():
             
             # 2. Fetch latest daily/intraday historical data in bulk to calculate indicators
             from datetime import timezone
-            end_dt = datetime.now(timezone.utc) - timedelta(minutes=16)
+            end_dt = datetime.now(timezone.utc)
             start_dt = end_dt - timedelta(days=5)
             
             start_str = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
