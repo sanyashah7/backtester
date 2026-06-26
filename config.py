@@ -16,7 +16,7 @@ USE_SP500             = True                      # True to trade all S&P 500 st
 TICKERS               = ["AAPL", "MSFT", "NVDA"]  # Fallback stocks if USE_SP500 is False
 BACKTEST_LIMIT        = 5                         # Run historical backtests on the first N stocks to keep it fast
 MAX_SHARES_PER_TICKER = 50                        # Max shares to hold per ticker (pyramiding limit)
-MAX_PORTFOLIO_SIZE    = 20                        # Max unique stocks/positions to hold at once
+MAX_PORTFOLIO_SIZE    = 10                        # Max unique stocks/positions to hold at once
 INTRADAY_INTERVAL     = "5Min"                    # Timeframe for active live trading (e.g. 1Min, 5Min, 15Min)
 POLL_INTERVAL_SECONDS = 60                        # How often to check market status/run indicators
 TICKER                = TICKERS[0]                # Fallback for single-asset code if needed
@@ -38,8 +38,6 @@ MR_Z_ENTRY    = -1.5            # z-score threshold to BUY  (price too low)
 MR_Z_EXIT     =  0.5            # z-score threshold to SELL (price recovered)
 
 # ── Optimization Parameters ───────────────────
-LEVERAGE_MULTIPLIER    = 2.0    # Leverage multiplier for position sizing (e.g. 2.0 for 2x leverage)
+LEVERAGE_MULTIPLIER    = 1.0    # Leverage multiplier for position sizing (e.g. 1.0 for 1x cash only)
 PRICE_CHANGE_THRESHOLD = 1.5    # Minimum daily price change % for buy setups
-TARGET1                = 2.0    # Profit target 1 % (sells first 50%)
-TARGET2                = 4.0    # Profit target 2 % (sells remaining 50%)
 
