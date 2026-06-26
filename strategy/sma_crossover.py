@@ -52,6 +52,9 @@ class SMACrossover(Strategy):
         position[diff == 2] = 1
         position[diff == -2] = -1
 
+        # Zero out any signals generated before both SMAs are fully computed
+        position[sma_long.isna() | sma_short.isna()] = 0
+
         # Attach the indicator columns to the data for charting
         data["SMA_Short"] = sma_short
         data["SMA_Long"]  = sma_long
