@@ -12,6 +12,7 @@ import io
 import time
 import os
 import json
+import gc
 import config
 from strategy.sma_crossover import SMACrossover
 from flask import Flask
@@ -163,7 +164,7 @@ def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) 
     
     try:
         # Download in bulk
-        df = yf.download(tickers, start=start_dt, end=end_dt, interval=yf_interval)
+        df = yf.download(tickers, start=start_dt, end=end_dt, interval=yf_interval, threads=20)
         if df.empty:
             print("[Warning] Yahoo Finance returned empty DataFrame.")
             return {}
@@ -409,6 +410,16 @@ def main():
                     print(f"[Error] Failed to process ticker {ticker}: {str(e)}")
                     
             print(f"[Scan] Scan complete. Summary: {buy_count} BUY, {sell_count} SELL, {hold_count} HOLD, {skip_count} skipped.")
+            
+            # Explicitly clean up memory to prevent Render OOM
+            try:
+                del bulk_bars
+                del positions
+                del positions_detailed
+            except NameError:
+                pass
+            gc.collect()
+
             print(f"[Scan] Scan complete. Sleeping for {config.POLL_INTERVAL_SECONDS} seconds...")
             time.sleep(config.POLL_INTERVAL_SECONDS)
 
