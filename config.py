@@ -29,8 +29,14 @@ COMMISSION    = 0.001           # 0.10 % per trade (both sides)
 SLIPPAGE      = 0.0005          # 0.05 % price impact per trade
 
 # ── SMA Crossover parameters ──────────────────
-SMA_SHORT     = 20              # fast moving-average window (days)
-SMA_LONG      = 50              # slow moving-average window (days)
+SMA_SHORT             = 20              # fast moving-average window (days)
+SMA_LONG              = 50              # slow moving-average window (days)
+EXIT_BELOW_FAST_SMA   = True            # Exit when price closes below fast SMA
+
+# ── Risk Management parameters ────────────────
+STOP_LOSS_PCT         = 0.02            # 2% hard stop-loss (None to disable)
+TAKE_PROFIT_PCT       = 0.05            # 5% take-profit (None to disable)
+TRAILING_STOP_PCT     = 0.03            # 3% trailing stop-loss (None to disable)
 
 # ── Mean Reversion parameters ─────────────────
 MR_WINDOW     = 20              # rolling mean / std look-back window

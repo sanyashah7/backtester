@@ -37,7 +37,7 @@ HEADERS = {
 
 # ── Trading Settings ─────────────────────────────────────────────────────────
 QTY        = 10                  # Number of shares to trade per signal
-STRATEGY   = SMACrossover(config.SMA_SHORT, config.SMA_LONG)  # Using SMA Crossover
+STRATEGY   = SMACrossover(config.SMA_SHORT, config.SMA_LONG, config.EXIT_BELOW_FAST_SMA)  # Using SMA Crossover
 
 
 def get_sp500_tickers() -> list:
@@ -85,6 +85,31 @@ def get_all_positions() -> dict:
             return {}
     except Exception as e:
         print(f"[Error] Exception when fetching positions: {str(e)}")
+        return {}
+
+
+def get_all_positions_detailed() -> dict:
+    """Fetch open positions with detailed information (qty, avg_entry_price, current_price)."""
+    url = f"{config.APCA_API_BASE_URL}/v2/positions"
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        if response.status_code == 200:
+            positions_list = response.json()
+            detailed = {
+                p["symbol"]: {
+                    "qty": float(p["qty"]),
+                    "avg_entry_price": float(p["avg_entry_price"]),
+                    "current_price": float(p["current_price"])
+                }
+                for p in positions_list
+            }
+            print(f"[Alpaca] Fetched {len(detailed)} detailed positions.")
+            return detailed
+        else:
+            print(f"[Error] Failed to fetch detailed positions: {response.text}")
+            return {}
+    except Exception as e:
+        print(f"[Error] Exception when fetching detailed positions: {str(e)}")
         return {}
 
 
@@ -220,8 +245,19 @@ def main():
             
             bulk_bars = fetch_alpaca_bars_bulk(tickers_list, config.INTRADAY_INTERVAL, start_str, end_str)
             
+            # Load tracked max prices from local JSON file
+            max_prices_file = "max_prices.json"
+            max_prices = {}
+            if os.path.exists(max_prices_file):
+                try:
+                    with open(max_prices_file, "r") as f:
+                        max_prices = json.load(f)
+                except Exception as e:
+                    print(f"[Warning] Failed to load max_prices.json: {str(e)}")
+
             # 3. Get active positions to prevent sequential API spamming
             positions = get_all_positions()
+            positions_detailed = get_all_positions_detailed()
 
             buy_count = 0
             sell_count = 0
@@ -254,6 +290,48 @@ def main():
                     
                     latest_date = ticker_df.index[-1]
                     latest_close = float(ticker_df["Close"].iloc[-1])
+
+                    # Check risk exits if position exists
+                    if ticker in positions_detailed:
+                        pos_info = positions_detailed[ticker]
+                        qty = pos_info["qty"]
+                        avg_entry = pos_info["avg_entry_price"]
+
+                        # Update trailing stop max price
+                        current_max = max_prices.get(ticker, avg_entry)
+                        current_max = max(current_max, latest_close)
+                        max_prices[ticker] = current_max
+
+                        try:
+                            with open(max_prices_file, "w") as f:
+                                json.dump(max_prices, f)
+                        except Exception:
+                            pass
+
+                        # Check risk exits
+                        exit_reason = None
+                        if config.STOP_LOSS_PCT is not None and latest_close <= avg_entry * (1 - config.STOP_LOSS_PCT):
+                            exit_reason = "Stop Loss"
+                        elif config.TAKE_PROFIT_PCT is not None and latest_close >= avg_entry * (1 + config.TAKE_PROFIT_PCT):
+                            exit_reason = "Take Profit"
+                        elif config.TRAILING_STOP_PCT is not None and latest_close <= current_max * (1 - config.TRAILING_STOP_PCT):
+                            exit_reason = "Trailing Stop"
+
+                        if exit_reason:
+                            print(f"[Risk Exit] {ticker}: Triggered {exit_reason} at close price ${latest_close:.2f} (Entry: ${avg_entry:.2f})")
+                            submit_order(ticker, int(qty), "sell")
+                            if ticker in max_prices:
+                                del max_prices[ticker]
+                                try:
+                                    with open(max_prices_file, "w") as f:
+                                        json.dump(max_prices, f)
+                                except Exception:
+                                    pass
+                            sell_count += 1
+                            last_traded_bar[ticker] = latest_date
+                            continue
+
+                    signals = STRATEGY.generate_signals(ticker_df)
                     latest_signal = int(signals.iloc[-1])
                     
                     if len(tickers_list) <= 10:
@@ -317,6 +395,15 @@ def main():
                                 print(f"[Alpaca] Current position for {ticker}: {current_qty} shares.")
                                 submit_order(ticker, int(current_qty), "sell")
                                 last_traded_bar[ticker] = latest_date
+                                
+                                # Clean up trailing stop tracking
+                                if ticker in max_prices:
+                                    del max_prices[ticker]
+                                    try:
+                                        with open(max_prices_file, "w") as f:
+                                            json.dump(max_prices, f)
+                                    except Exception:
+                                        pass
                                 
                                 if ticker in positions:
                                     del positions[ticker]

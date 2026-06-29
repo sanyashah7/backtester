@@ -24,36 +24,45 @@ from strategy.base import Strategy
 
 
 class SMACrossover(Strategy):
-    def __init__(self, short_window: int = 20, long_window: int = 50):
+    def __init__(self, short_window: int = 20, long_window: int = 50, exit_below_fast_sma: bool = False):
         if short_window >= long_window:
             raise ValueError("short_window must be less than long_window")
         self.short_window = short_window
         self.long_window  = long_window
+        self.exit_below_fast_sma = exit_below_fast_sma
 
     @property
     def name(self) -> str:
-        return f"SMA-Crossover ({self.short_window}/{self.long_window})"
+        suffix = " + Fast Exit" if self.exit_below_fast_sma else ""
+        return f"SMA-Crossover ({self.short_window}/{self.long_window}){suffix}"
 
     def generate_signals(self, data: pd.DataFrame) -> pd.Series:
         close      = data["Close"]
         sma_short  = close.rolling(self.short_window).mean()
         sma_long   = close.rolling(self.long_window).mean()
 
-        # Define state: 1 when short > long, -1 when short <= long
-        state = pd.Series(-1, index=data.index, dtype=int)
-        state[sma_short > sma_long] = 1
-
-        # Only emit a signal on the crossover bar (change point), hold (0) otherwise
-        # Transition from -1 to 1 yields diff = +2 (BUY)
-        # Transition from 1 to -1 yields diff = -2 (SELL)
-        diff = state.diff().fillna(0).astype(int)
-        
         position = pd.Series(0, index=data.index, dtype=int)
-        position[diff == 2] = 1
-        position[diff == -2] = -1
+        in_trade = False
 
-        # Zero out any signals generated before both SMAs are fully computed
-        position[sma_long.isna() | sma_short.isna()] = 0
+        for i in range(1, len(data)):
+            # Ensure we have valid values for current and prior bars
+            if pd.isna(sma_long.iloc[i]) or pd.isna(sma_short.iloc[i]) or pd.isna(sma_long.iloc[i-1]) or pd.isna(sma_short.iloc[i-1]):
+                continue
+
+            # Bullish crossover: short SMA crosses above long SMA
+            bullish_cross = (sma_short.iloc[i] > sma_long.iloc[i]) and (sma_short.iloc[i-1] <= sma_long.iloc[i-1])
+            # Bearish crossover: short SMA crosses below or equal to long SMA
+            bearish_cross = (sma_short.iloc[i] <= sma_long.iloc[i]) and (sma_short.iloc[i-1] > sma_long.iloc[i-1])
+
+            if not in_trade:
+                if bullish_cross:
+                    position.iloc[i] = 1
+                    in_trade = True
+            else:
+                # Exit conditions: bearish crossover OR (if enabled) price closes below fast SMA
+                if bearish_cross or (self.exit_below_fast_sma and close.iloc[i] < sma_short.iloc[i]):
+                    position.iloc[i] = -1
+                    in_trade = False
 
         # Attach the indicator columns to the data for charting
         data["SMA_Short"] = sma_short

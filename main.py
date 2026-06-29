@@ -27,9 +27,12 @@ def run_strategy(data: pd.DataFrame, strategy, label: str, ticker: str) -> dict:
     signals = strategy.generate_signals(df)
 
     portfolio = Portfolio(
-        initial_cash = config.INITIAL_CASH,
-        commission   = config.COMMISSION,
-        slippage     = config.SLIPPAGE,
+        initial_cash      = config.INITIAL_CASH,
+        commission        = config.COMMISSION,
+        slippage          = config.SLIPPAGE,
+        stop_loss_pct     = config.STOP_LOSS_PCT,
+        take_profit_pct   = config.TAKE_PROFIT_PCT,
+        trailing_stop_pct = config.TRAILING_STOP_PCT,
     )
 
     for date, row in df.iterrows():
@@ -47,7 +50,7 @@ def run_strategy(data: pd.DataFrame, strategy, label: str, ticker: str) -> dict:
     # Print trade log (last 5)
     if not trades_df.empty:
         print("\n  Last 5 trades:")
-        print(trades_df[["entry_date","exit_date","entry_price","exit_price","pnl","pnl_pct"]]
+        print(trades_df[["entry_date","exit_date","entry_price","exit_price","pnl","pnl_pct","exit_reason"]]
               .tail(5).to_string(index=False))
 
     return metrics
@@ -104,7 +107,7 @@ def main():
             raw_data = fetch_data(ticker, config.START_DATE, config.END_DATE, config.INTERVAL)
 
             strategies = {
-                "SMA_Crossover":  SMACrossover(config.SMA_SHORT,   config.SMA_LONG),
+                "SMA_Crossover":  SMACrossover(config.SMA_SHORT,   config.SMA_LONG, config.EXIT_BELOW_FAST_SMA),
                 "Mean_Reversion": MeanReversion(config.MR_WINDOW,  config.MR_Z_ENTRY, config.MR_Z_EXIT),
             }
 
