@@ -34,9 +34,9 @@ SMA_LONG              = 50              # slow moving-average window (days)
 EXIT_BELOW_FAST_SMA   = True            # Exit when price closes below fast SMA
 
 # ── Risk Management parameters ────────────────
-STOP_LOSS_PCT         = 0.02            # 2% hard stop-loss (None to disable)
-TAKE_PROFIT_PCT       = 0.05            # 5% take-profit (None to disable)
-TRAILING_STOP_PCT     = 0.03            # 3% trailing stop-loss (None to disable)
+STOP_LOSS_PCT         = 0.025           # 2.5% hard stop-loss (None to disable)
+TAKE_PROFIT_PCT       = 0.12            # 12% take-profit (None to disable)
+TRAILING_STOP_PCT     = 0.05            # 5% trailing stop-loss (None to disable)
 
 # ── Mean Reversion parameters ─────────────────
 MR_WINDOW     = 20              # rolling mean / std look-back window
@@ -44,16 +44,16 @@ MR_Z_ENTRY    = -1.5            # z-score threshold to BUY  (price too low)
 MR_Z_EXIT     =  0.5            # z-score threshold to SELL (price recovered)
 
 # ── Strategy Entry Filters ────────────────────
-USE_VOLUME_FILTER       = True            # Only enter if volume is above average
+USE_VOLUME_FILTER       = False           # Disable Volume filter to allow more trades
 VOLUME_MA_WINDOW        = 20              # Window for average volume
 VOLUME_MULTIPLIER       = 1.5             # Volume must be >= X times average volume
 
-USE_ATR_FILTER          = True            # Only enter if daily range is above ATR
+USE_ATR_FILTER          = False           # Disable ATR filter to allow more trades
 ATR_WINDOW              = 14              # Window for ATR calculation
 ATR_MULTIPLIER          = 1.0             # Daily range must be >= X times ATR
 
 USE_PRICE_CHANGE_FILTER = True            # Only enter if daily price change is positive/significant
-PRICE_CHANGE_THRESHOLD  = 0.75            # Minimum daily price change % (lowered from 1.5%)
+PRICE_CHANGE_THRESHOLD  = 0.50            # Minimum daily price change % (0.5% threshold)
 
 # ── Optimization Parameters ───────────────────
 LEVERAGE_MULTIPLIER    = 1.0    # Leverage multiplier for position sizing (e.g. 1.0 for 1x cash only)
