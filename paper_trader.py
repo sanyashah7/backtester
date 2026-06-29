@@ -37,7 +37,19 @@ HEADERS = {
 
 # ── Trading Settings ─────────────────────────────────────────────────────────
 QTY        = 10                  # Number of shares to trade per signal
-STRATEGY   = SMACrossover(config.SMA_SHORT, config.SMA_LONG, config.EXIT_BELOW_FAST_SMA)  # Using SMA Crossover
+STRATEGY   = SMACrossover(
+    short_window            = config.SMA_SHORT,
+    long_window             = config.SMA_LONG,
+    exit_below_fast_sma     = config.EXIT_BELOW_FAST_SMA,
+    use_volume_filter       = config.USE_VOLUME_FILTER,
+    volume_window           = config.VOLUME_MA_WINDOW,
+    volume_multiplier       = config.VOLUME_MULTIPLIER,
+    use_atr_filter          = config.USE_ATR_FILTER,
+    atr_window              = config.ATR_WINDOW,
+    atr_multiplier          = config.ATR_MULTIPLIER,
+    use_price_change_filter = config.USE_PRICE_CHANGE_FILTER,
+    price_change_threshold  = config.PRICE_CHANGE_THRESHOLD
+)
 
 
 def get_sp500_tickers() -> list:
@@ -354,21 +366,6 @@ def main():
                                 # Portfolio size check:
                                 if len(positions) >= config.MAX_PORTFOLIO_SIZE:
                                     print(f"[Scan] Skipping BUY for {ticker} because portfolio limit is reached ({len(positions)} / {config.MAX_PORTFOLIO_SIZE} positions).")
-                                    continue
-                                    
-                                # Volatility Filter (daily move of at least PRICE_CHANGE_THRESHOLD %)
-                                daily_change_pct = 0.0
-                                latest_day = latest_date.date()
-                                prev_day_bars = ticker_df[ticker_df.index.date < latest_day]
-                                if not prev_day_bars.empty:
-                                    prev_close = float(prev_day_bars["Close"].iloc[-1])
-                                    daily_change_pct = ((latest_close - prev_close) / prev_close) * 100.0
-                                else:
-                                    first_open = float(ticker_df["Open"].iloc[0])
-                                    daily_change_pct = ((latest_close - first_open) / first_open) * 100.0
-                                    
-                                if daily_change_pct < config.PRICE_CHANGE_THRESHOLD:
-                                    print(f"[Filter] Skipping BUY for {ticker} because daily move ({daily_change_pct:.2f}%) is below threshold ({config.PRICE_CHANGE_THRESHOLD}%).")
                                     continue
                                     
                                 # Dynamic Equal-Allocation Sizing:

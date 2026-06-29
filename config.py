@@ -43,7 +43,18 @@ MR_WINDOW     = 20              # rolling mean / std look-back window
 MR_Z_ENTRY    = -1.5            # z-score threshold to BUY  (price too low)
 MR_Z_EXIT     =  0.5            # z-score threshold to SELL (price recovered)
 
+# ── Strategy Entry Filters ────────────────────
+USE_VOLUME_FILTER       = True            # Only enter if volume is above average
+VOLUME_MA_WINDOW        = 20              # Window for average volume
+VOLUME_MULTIPLIER       = 1.5             # Volume must be >= X times average volume
+
+USE_ATR_FILTER          = True            # Only enter if daily range is above ATR
+ATR_WINDOW              = 14              # Window for ATR calculation
+ATR_MULTIPLIER          = 1.0             # Daily range must be >= X times ATR
+
+USE_PRICE_CHANGE_FILTER = True            # Only enter if daily price change is positive/significant
+PRICE_CHANGE_THRESHOLD  = 0.75            # Minimum daily price change % (lowered from 1.5%)
+
 # ── Optimization Parameters ───────────────────
 LEVERAGE_MULTIPLIER    = 1.0    # Leverage multiplier for position sizing (e.g. 1.0 for 1x cash only)
-PRICE_CHANGE_THRESHOLD = 1.5    # Minimum daily price change % for buy setups
 

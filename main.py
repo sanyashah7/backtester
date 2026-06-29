@@ -107,7 +107,19 @@ def main():
             raw_data = fetch_data(ticker, config.START_DATE, config.END_DATE, config.INTERVAL)
 
             strategies = {
-                "SMA_Crossover":  SMACrossover(config.SMA_SHORT,   config.SMA_LONG, config.EXIT_BELOW_FAST_SMA),
+                "SMA_Crossover":  SMACrossover(
+                    short_window            = config.SMA_SHORT,
+                    long_window             = config.SMA_LONG,
+                    exit_below_fast_sma     = config.EXIT_BELOW_FAST_SMA,
+                    use_volume_filter       = config.USE_VOLUME_FILTER,
+                    volume_window           = config.VOLUME_MA_WINDOW,
+                    volume_multiplier       = config.VOLUME_MULTIPLIER,
+                    use_atr_filter          = config.USE_ATR_FILTER,
+                    atr_window              = config.ATR_WINDOW,
+                    atr_multiplier          = config.ATR_MULTIPLIER,
+                    use_price_change_filter = config.USE_PRICE_CHANGE_FILTER,
+                    price_change_threshold  = config.PRICE_CHANGE_THRESHOLD
+                ),
                 "Mean_Reversion": MeanReversion(config.MR_WINDOW,  config.MR_Z_ENTRY, config.MR_Z_EXIT),
             }
 
