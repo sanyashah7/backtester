@@ -48,14 +48,20 @@ class TestStrategies(unittest.TestCase):
     def test_sma_crossover_signals(self):
         # Create dummy data: ascending prices from 10 to 100 to force fast SMA > slow SMA
         dates = pd.date_range(start="2026-06-01", periods=10)
-        data = pd.DataFrame({"Close": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]}, index=dates)
+        prices = [50.0, 40.0, 30.0, 25.0, 35.0, 45.0, 55.0, 65.0, 75.0, 85.0]
+        data = pd.DataFrame({
+            "Close": prices,
+            "High": [p + 1.0 for p in prices],
+            "Low": [p - 1.0 for p in prices],
+            "Volume": [1000] * 10
+        }, index=dates)
         
         strategy = SMACrossover(short_window=2, long_window=4)
         signals = strategy.generate_signals(data)
         
         self.assertEqual(len(signals), 10)
-        # Crossover should trigger on index 3 (first bar where both SMAs can be calculated and fast > slow)
-        self.assertEqual(signals.iloc[3], 1)
+        # Crossover should trigger on index 5 (first bar where fast SMA crosses above slow SMA)
+        self.assertEqual(signals.iloc[5], 1)
         # Subsequent bars should hold (0) as fast SMA remains above slow SMA
         self.assertEqual(signals.iloc[-1], 0)
 

@@ -220,6 +220,24 @@ def submit_order(symbol: str, qty: int, side: str):
         print(f"[Error] Exception during order submission for {symbol}: {str(e)}")
 
 
+def get_recent_split_factor(ticker: str) -> float:
+    """Check if a stock split occurred for ticker in the last 7 days and return cumulative split factor."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        splits = t.splits
+        if not splits.empty:
+            start_dt = datetime.now() - timedelta(days=7)
+            splits.index = splits.index.tz_localize(None)
+            recent_splits = splits[splits.index >= start_dt]
+            if not recent_splits.empty:
+                factor = recent_splits.prod()
+                return float(factor)
+    except Exception as e:
+        print(f"[Warning] Failed to fetch splits for {ticker}: {str(e)}")
+    return 1.0
+
+
 def main():
     # Load tickers list
     if config.USE_SP500:
@@ -310,8 +328,26 @@ def main():
                         qty = pos_info["qty"]
                         avg_entry = pos_info["avg_entry_price"]
 
+                        # Check for stock split disequilibrium to avoid phantom stop losses
+                        split_factor = get_recent_split_factor(ticker)
+                        if split_factor != 1.0:
+                            # If Alpaca's avg_entry is still close to the pre-split price
+                            # (i.e. avg_entry is close to latest_close * split_factor),
+                            # it means Alpaca has not processed the split yet.
+                            expected_pre_split_entry = latest_close * split_factor
+                            if abs(avg_entry - expected_pre_split_entry) / expected_pre_split_entry < 0.15:
+                                print(f"[Split Lag Detected] {ticker}: Stock split factor {split_factor} detected, but Alpaca entry price (${avg_entry:.2f}) is not yet adjusted. Skipping risk checks to prevent phantom stop-loss.")
+                                continue
+
                         # Update trailing stop max price
                         current_max = max_prices.get(ticker, avg_entry)
+                        
+                        # Adjust current_max for split if it's still pre-split
+                        if split_factor != 1.0 and current_max > latest_close * 1.5:
+                            print(f"[Split Adjustment] {ticker}: Adjusting trailing stop max price from {current_max:.2f} to {current_max / split_factor:.2f}")
+                            current_max = current_max / split_factor
+                            max_prices[ticker] = current_max
+
                         current_max = max(current_max, latest_close)
                         max_prices[ticker] = current_max
 
