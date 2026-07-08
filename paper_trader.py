@@ -529,8 +529,8 @@ def main():
                             # Calculate Daily ATR(14) instead of 5-minute ATR
                             latest_atr = get_daily_atr(ticker)
                             if latest_atr <= 0.0:
-                                # Fallback: 2% of the average entry price
-                                latest_atr = avg_entry * 0.02
+                                print(f"[Warning] Failed to calculate Daily ATR for existing position {ticker}. Skipping risk check for this cycle.")
+                                continue
                                 
                             initial_atr_stop = avg_entry - (2 * latest_atr)
                             position_metadata[ticker] = {
@@ -653,17 +653,17 @@ def main():
                                     print(f"[Scan] Skipping BUY for {ticker} because price ${latest_close:.2f} is higher than allocation ${target_value:.2f}.")
                                     continue
                                     
+                                # Calculate Daily ATR(14) instead of 5-minute ATR
+                                latest_atr = get_daily_atr(ticker)
+                                if latest_atr <= 0.0:
+                                    print(f"[Warning] Failed to calculate Daily ATR for {ticker}. Skipping trade.")
+                                    continue
+                                    
                                 print(f"[Signal] {ticker}: {latest_date} | Close: ${latest_close:.2f} | Signal: BUY")
                                 print(f"[Alpaca] Target allocation: ${target_value:.2f} ({buy_qty} shares).")
                                 submit_order(ticker, buy_qty, "buy")
                                 last_traded_bar[ticker] = latest_date
                                 
-                                # Calculate Daily ATR(14) instead of 5-minute ATR
-                                latest_atr = get_daily_atr(ticker)
-                                if latest_atr <= 0.0:
-                                    # Fallback: 2% of the close price
-                                    latest_atr = latest_close * 0.02
-                                    
                                 initial_atr_stop = latest_close - (2 * latest_atr)
 
                                 # Store position metadata
