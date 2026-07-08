@@ -67,21 +67,36 @@ def get_sp500_tickers() -> list:
         return config.TICKERS
 
 
-def is_market_open() -> bool:
-    """Query Alpaca Clock API to check if the US stock market is currently open."""
+def check_market_status() -> tuple:
+    """Query Alpaca Clock API to check if the US stock market is currently open.
+    Returns a tuple (is_open, sleep_seconds_if_closed)."""
     url = f"{config.APCA_API_BASE_URL}/v2/clock"
     try:
         response = requests.get(url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
             clock_data = response.json()
             is_open = clock_data.get("is_open", False)
-            return is_open
+            if is_open:
+                return True, 0
+            
+            # Calculate dynamic sleep time if market is closed
+            next_open_str = clock_data.get("next_open")
+            timestamp_str = clock_data.get("timestamp")
+            if next_open_str and timestamp_str:
+                next_open = pd.to_datetime(next_open_str)
+                now = pd.to_datetime(timestamp_str)
+                time_to_open = (next_open - now).total_seconds()
+                # Sleep for at least 10 seconds and at most 15 minutes (900 seconds)
+                sleep_seconds = int(min(900, max(10, time_to_open + 5)))
+                return False, sleep_seconds
+            return False, 900
         else:
             print(f"[Warning] Failed to fetch market clock status: {response.text}. Defaulting to open.")
-            return True
+            return True, 0
     except Exception as e:
         print(f"[Warning] Error checking market clock: {str(e)}. Defaulting to open.")
-        return True
+        return True, 0
+
 
 
 def get_all_positions() -> dict:
@@ -306,9 +321,10 @@ def main():
     while True:
         try:
             # 1. Check if the market is open
-            if not is_market_open():
-                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Clock] US stock market is currently CLOSED. Sleeping for 15 minutes...")
-                time.sleep(900)  # Sleep 15 minutes
+            is_open, sleep_secs = check_market_status()
+            if not is_open:
+                print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Clock] US stock market is currently CLOSED. Sleeping for {sleep_secs/60:.1f} minutes...")
+                time.sleep(sleep_secs)
                 continue
                 
             print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Scan] US stock market is OPEN. Running active strategy scan...")
