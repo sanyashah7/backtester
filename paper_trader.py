@@ -53,6 +53,10 @@ STRATEGY   = SMACrossover(
     price_change_threshold  = config.PRICE_CHANGE_THRESHOLD
 )
 
+# ── Cache for SPY market regime to avoid Yahoo Finance rate limits ───────────
+LAST_REGIME_VAL = True
+LAST_REGIME_FETCH_TIME = None
+
 
 def get_sp500_tickers() -> list:
     """Load S&P 500 stock tickers from local file."""
@@ -329,36 +333,50 @@ def main():
                 
             print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Scan] US stock market is OPEN. Running active strategy scan...")
             
-            # Fetch daily SPY data to determine market regime
+            # Fetch daily SPY data to determine market regime (once every 4 hours)
             market_bullish = True
-            try:
-                import yfinance as yf
-                spy = yf.Ticker("SPY")
-                spy_df = spy.history(period="2y", interval="1d")
-                if len(spy_df) >= 200:
-                    spy_close = spy_df["Close"].iloc[-1]
-                    spy_200_sma = spy_df["Close"].rolling(200).mean().iloc[-1]
-                    market_bullish = spy_close > spy_200_sma
-                    print(f"Market regime: {'Bullish' if market_bullish else 'Bearish'}")
-                    print(f"{'Buying allowed' if market_bullish else 'Skipping new entries'}")
-                    
-                    # Notify Discord on regime change
-                    if last_regime is not None and last_regime != market_bullish:
-                        try:
-                            notify_market_regime(market_bullish)
-                        except Exception as ne:
-                            print(f"[Warning] Failed to send market regime notification: {str(ne)}")
-                    last_regime = market_bullish
-                else:
-                    print("[Warning] Not enough SPY data for 200-day SMA. Defaulting to Bullish.")
-                    market_bullish = True
-                    if last_regime is None:
-                        last_regime = True
-            except Exception as e:
-                print(f"[Error] Failed to calculate SPY market regime: {str(e)}. Defaulting to Bullish.")
-                market_bullish = True
-                if last_regime is None:
-                    last_regime = True
+            current_time = datetime.now()
+            
+            global LAST_REGIME_VAL, LAST_REGIME_FETCH_TIME
+            
+            should_fetch_spy = (
+                LAST_REGIME_FETCH_TIME is None or 
+                (current_time - LAST_REGIME_FETCH_TIME).total_seconds() > 14400
+            )
+            
+            if should_fetch_spy:
+                try:
+                    import yfinance as yf
+                    session = requests.Session()
+                    session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+                    })
+                    spy = yf.Ticker("SPY", session=session)
+                    spy_df = spy.history(period="2y", interval="1d")
+                    if len(spy_df) >= 200:
+                        spy_close = spy_df["Close"].iloc[-1]
+                        spy_200_sma = spy_df["Close"].rolling(200).mean().iloc[-1]
+                        market_bullish = spy_close > spy_200_sma
+                        LAST_REGIME_VAL = market_bullish
+                        LAST_REGIME_FETCH_TIME = current_time
+                        print(f"Market regime: {'Bullish' if market_bullish else 'Bearish'} (Updated)")
+                    else:
+                        print("[Warning] Not enough SPY data for 200-day SMA. Defaulting to previous/fallback.")
+                        market_bullish = LAST_REGIME_VAL
+                except Exception as e:
+                    print(f"[Error] Failed to calculate SPY market regime: {str(e)}. Defaulting to previous/fallback: {LAST_REGIME_VAL}")
+                    market_bullish = LAST_REGIME_VAL
+            else:
+                market_bullish = LAST_REGIME_VAL
+                print(f"Market regime: {'Bullish' if market_bullish else 'Bearish'} (Cached)")
+                
+            # Notify Discord on regime change
+            if last_regime is not None and last_regime != market_bullish:
+                try:
+                    notify_market_regime(market_bullish)
+                except Exception as ne:
+                    print(f"[Warning] Failed to send market regime notification: {str(ne)}")
+            last_regime = market_bullish
 
             # 2. Fetch latest daily/intraday historical data in bulk to calculate indicators
             from datetime import timezone
