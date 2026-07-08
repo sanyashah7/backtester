@@ -52,7 +52,7 @@ USE_ATR_FILTER          = False           # Disable ATR filter to allow more tra
 ATR_WINDOW              = 14              # Window for ATR calculation
 ATR_MULTIPLIER          = 1.0             # Daily range must be >= X times ATR
 
-USE_PRICE_CHANGE_FILTER = True            # Only enter if daily price change is positive/significant
+USE_PRICE_CHANGE_FILTER = False           # Only enter if daily price change is positive/significant
 PRICE_CHANGE_THRESHOLD  = 0.50            # Minimum daily price change % (0.5% threshold)
 
 # ── Optimization Parameters ───────────────────
