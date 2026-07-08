@@ -57,6 +57,51 @@ STRATEGY   = SMACrossover(
 LAST_REGIME_VAL = True
 LAST_REGIME_FETCH_TIME = None
 
+# ── Cache for Daily ATR to prevent rate limits ───────────────────────────────
+DAILY_ATR_CACHE = {}  # ticker: (atr, timestamp)
+
+
+def get_daily_atr(ticker: str) -> float:
+    """Download daily historical data for the ticker and calculate ATR(14) with caching."""
+    global DAILY_ATR_CACHE
+    now = datetime.now()
+    
+    # Check cache (valid for 1 day, since daily ATR only changes once a day)
+    if ticker in DAILY_ATR_CACHE:
+        cached_atr, cached_time = DAILY_ATR_CACHE[ticker]
+        if (now - cached_time).days < 1:
+            return cached_atr
+            
+    try:
+        import yfinance as yf
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+        })
+        ticker_obj = yf.Ticker(ticker, session=session)
+        # Download last 60 days of daily data (approx. 40 trading days) to compute ATR(14)
+        df = ticker_obj.history(period="60d", interval="1d")
+        if len(df) >= 15:
+            high = df["High"]
+            low = df["Low"]
+            close = df["Close"]
+            tr1 = high - low
+            tr2 = (high - close.shift(1)).abs()
+            tr3 = (low - close.shift(1)).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr_series = tr.rolling(14).mean()
+            atr = float(atr_series.iloc[-1])
+            
+            DAILY_ATR_CACHE[ticker] = (atr, now)
+            print(f"[ATR] Calculated Daily ATR(14) for {ticker}: {atr:.2f}")
+            return atr
+        else:
+            print(f"[Warning] Not enough daily data for {ticker} ATR(14). Falling back to 0.0.")
+            return 0.0
+    except Exception as e:
+        print(f"[Error] Failed to calculate daily ATR(14) for {ticker}: {str(e)}")
+        return 0.0
+
 
 def get_sp500_tickers() -> list:
     """Load S&P 500 stock tickers from local file."""
@@ -480,18 +525,13 @@ def main():
                         meta = position_metadata.get(ticker, {})
                         initial_atr_stop = meta.get("initial_atr_stop")
                         
-                        # Calculate ATR(14)
-                        high = ticker_df["High"]
-                        low = ticker_df["Low"]
-                        close = ticker_df["Close"]
-                        tr1 = high - low
-                        tr2 = (high - close.shift(1)).abs()
-                        tr3 = (low - close.shift(1)).abs()
-                        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-                        atr_series = tr.rolling(14).mean()
-                        latest_atr = float(atr_series.iloc[-1])
-
                         if initial_atr_stop is None:
+                            # Calculate Daily ATR(14) instead of 5-minute ATR
+                            latest_atr = get_daily_atr(ticker)
+                            if latest_atr <= 0.0:
+                                # Fallback: 2% of the average entry price
+                                latest_atr = avg_entry * 0.02
+                                
                             initial_atr_stop = avg_entry - (2 * latest_atr)
                             position_metadata[ticker] = {
                                 "entry_price": avg_entry,
@@ -618,16 +658,12 @@ def main():
                                 submit_order(ticker, buy_qty, "buy")
                                 last_traded_bar[ticker] = latest_date
                                 
-                                # Calculate ATR(14)
-                                high = ticker_df["High"]
-                                low = ticker_df["Low"]
-                                close = ticker_df["Close"]
-                                tr1 = high - low
-                                tr2 = (high - close.shift(1)).abs()
-                                tr3 = (low - close.shift(1)).abs()
-                                tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-                                atr_series = tr.rolling(14).mean()
-                                latest_atr = float(atr_series.iloc[-1])
+                                # Calculate Daily ATR(14) instead of 5-minute ATR
+                                latest_atr = get_daily_atr(ticker)
+                                if latest_atr <= 0.0:
+                                    # Fallback: 2% of the close price
+                                    latest_atr = latest_close * 0.02
+                                    
                                 initial_atr_stop = latest_close - (2 * latest_atr)
 
                                 # Store position metadata
