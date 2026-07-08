@@ -15,6 +15,7 @@ import json
 import gc
 import config
 from strategy.sma_crossover import SMACrossover
+from analytics.discord_notifier import notify_buy, notify_sell, notify_market_regime
 from flask import Flask
 import threading
 
@@ -142,9 +143,15 @@ def get_account_equity() -> float:
         return 100000.0
 
 
+CACHED_DF_MAP = {}
+
 def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) -> dict:
-    """Download historical daily/intraday bars for a list of tickers from Yahoo Finance in bulk."""
+    """Download historical daily/intraday bars for a list of tickers, using caching for efficiency."""
+    global CACHED_DF_MAP
     import yfinance as yf
+    
+    # Check if we have cache for all tickers
+    has_cache = all(t in CACHED_DF_MAP for t in tickers) and len(CACHED_DF_MAP) > 0
     
     # Map timeframe to yfinance interval
     yf_interval = "5m"
@@ -157,44 +164,85 @@ def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) 
     elif timeframe == "1Day" or timeframe == "1d":
         yf_interval = "1d"
         
-    start_dt = pd.to_datetime(start)
-    end_dt = pd.to_datetime(end)
-    
-    print(f"[YahooData] Fetching recent {yf_interval} bars for {len(tickers)} tickers in bulk from Yahoo Finance...")
-    
     try:
-        # Download in bulk
-        df = yf.download(tickers, start=start_dt, end=end_dt, interval=yf_interval, threads=20)
+        if not has_cache:
+            # Full fetch: last 5 days
+            print(f"[Cache] No cache found. Performing full historical fetch (5 days) for {len(tickers)} tickers...")
+            start_dt = pd.to_datetime(start)
+            df = yf.download(tickers, start=start_dt, interval=yf_interval, threads=20, group_by='ticker')
+        else:
+            # Incremental fetch: last 1 day (subsequent scans)
+            print(f"[Cache] Cache exists. Performing incremental fetch (1 day) for {len(tickers)} tickers...")
+            start_dt = datetime.now() - timedelta(days=1)
+            df = yf.download(tickers, start=start_dt, interval=yf_interval, threads=20, group_by='ticker')
+            
         if df.empty:
             print("[Warning] Yahoo Finance returned empty DataFrame.")
-            return {}
+            return {t: [] for t in tickers}
             
-        all_bars = {}
         for ticker in tickers:
-            if ticker in df.columns.get_level_values('Ticker'):
-                # Extract the columns for this ticker
-                ticker_df = df.xs(ticker, level='Ticker', axis=1).dropna(how='all')
-                
+            try:
+                if len(tickers) == 1:
+                    ticker_df = df.dropna(how='all')
+                else:
+                    if ticker in df.columns.get_level_values(0):
+                        ticker_df = df[ticker].dropna(how='all')
+                    else:
+                        continue
+                        
+                if ticker_df.empty:
+                    continue
+                    
+                # Format to uniform columns
                 bars = []
                 for dt, row in ticker_df.iterrows():
                     if pd.isna(row["Close"]):
                         continue
                     bars.append({
-                        "t": dt.isoformat(),
+                        "t": dt,
                         "o": float(row["Open"]),
                         "h": float(row["High"]),
                         "l": float(row["Low"]),
                         "c": float(row["Close"]),
                         "v": int(row["Volume"]) if not pd.isna(row["Volume"]) else 0
                     })
-                all_bars[ticker] = bars
+                new_df = pd.DataFrame(bars)
+                if new_df.empty:
+                    continue
+                new_df = new_df.set_index("t")
                 
-        print(f"[YahooData] Bulk fetch completed. Got bars for {len(all_bars)} / {len(tickers)} tickers.")
-        return all_bars
-        
+                if ticker in CACHED_DF_MAP:
+                    old_df = CACHED_DF_MAP[ticker]
+                    combined = pd.concat([old_df, new_df])
+                    combined = combined[~combined.index.duplicated(keep='last')].sort_index()
+                    CACHED_DF_MAP[ticker] = combined.tail(150)
+                else:
+                    CACHED_DF_MAP[ticker] = new_df.tail(150)
+            except Exception as e:
+                print(f"[Warning] Failed to update cache for {ticker}: {str(e)}")
+                
     except Exception as e:
-        print(f"[Error] Yahoo Finance bulk download failed: {str(e)}")
-        return {}
+        print(f"[Error] Yahoo Finance download failed: {str(e)}")
+        
+    # Return formatted list of dicts from CACHED_DF_MAP
+    result = {}
+    for ticker in tickers:
+        if ticker in CACHED_DF_MAP:
+            cached_df = CACHED_DF_MAP[ticker]
+            bars_list = []
+            for dt, row in cached_df.iterrows():
+                bars_list.append({
+                    "t": dt.isoformat(),
+                    "o": row["Open"],
+                    "h": row["High"],
+                    "l": row["Low"],
+                    "c": row["Close"],
+                    "v": row["Volume"]
+                })
+            result[ticker] = bars_list
+        else:
+            result[ticker] = []
+    return result
 
 
 def submit_order(symbol: str, qty: int, side: str):
@@ -252,8 +300,7 @@ def main():
     
     print("[System] Active trading loop started. Press Ctrl+C to terminate.")
 
-    # Track the last bar timestamp we executed a trade on for each ticker,
-    # to avoid placing multiple orders during the same 5-minute bar.
+    last_regime = None
     last_traded_bar = {}
 
     while True:
@@ -266,6 +313,37 @@ def main():
                 
             print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Scan] US stock market is OPEN. Running active strategy scan...")
             
+            # Fetch daily SPY data to determine market regime
+            market_bullish = True
+            try:
+                import yfinance as yf
+                spy = yf.Ticker("SPY")
+                spy_df = spy.history(period="2y", interval="1d")
+                if len(spy_df) >= 200:
+                    spy_close = spy_df["Close"].iloc[-1]
+                    spy_200_sma = spy_df["Close"].rolling(200).mean().iloc[-1]
+                    market_bullish = spy_close > spy_200_sma
+                    print(f"Market regime: {'Bullish' if market_bullish else 'Bearish'}")
+                    print(f"{'Buying allowed' if market_bullish else 'Skipping new entries'}")
+                    
+                    # Notify Discord on regime change
+                    if last_regime is not None and last_regime != market_bullish:
+                        try:
+                            notify_market_regime(market_bullish)
+                        except Exception as ne:
+                            print(f"[Warning] Failed to send market regime notification: {str(ne)}")
+                    last_regime = market_bullish
+                else:
+                    print("[Warning] Not enough SPY data for 200-day SMA. Defaulting to Bullish.")
+                    market_bullish = True
+                    if last_regime is None:
+                        last_regime = True
+            except Exception as e:
+                print(f"[Error] Failed to calculate SPY market regime: {str(e)}. Defaulting to Bullish.")
+                market_bullish = True
+                if last_regime is None:
+                    last_regime = True
+
             # 2. Fetch latest daily/intraday historical data in bulk to calculate indicators
             from datetime import timezone
             end_dt = datetime.now(timezone.utc)
@@ -285,6 +363,16 @@ def main():
                         max_prices = json.load(f)
                 except Exception as e:
                     print(f"[Warning] Failed to load max_prices.json: {str(e)}")
+
+            # Load tracked position metadata from local JSON file
+            position_metadata_file = "position_metadata.json"
+            position_metadata = {}
+            if os.path.exists(position_metadata_file):
+                try:
+                    with open(position_metadata_file, "r") as f:
+                        position_metadata = json.load(f)
+                except Exception as e:
+                    print(f"[Warning] Failed to load position_metadata.json: {str(e)}")
 
             # 3. Get active positions to prevent sequential API spamming
             positions = get_all_positions()
@@ -331,9 +419,6 @@ def main():
                         # Check for stock split disequilibrium to avoid phantom stop losses
                         split_factor = get_recent_split_factor(ticker)
                         if split_factor != 1.0:
-                            # If Alpaca's avg_entry is still close to the pre-split price
-                            # (i.e. avg_entry is close to latest_close * split_factor),
-                            # it means Alpaca has not processed the split yet.
                             expected_pre_split_entry = latest_close * split_factor
                             if abs(avg_entry - expected_pre_split_entry) / expected_pre_split_entry < 0.15:
                                 print(f"[Split Lag Detected] {ticker}: Stock split factor {split_factor} detected, but Alpaca entry price (${avg_entry:.2f}) is not yet adjusted. Skipping risk checks to prevent phantom stop-loss.")
@@ -357,18 +442,84 @@ def main():
                         except Exception:
                             pass
 
+                        # Load or initialize position metadata
+                        meta = position_metadata.get(ticker, {})
+                        initial_atr_stop = meta.get("initial_atr_stop")
+                        
+                        # Calculate ATR(14)
+                        high = ticker_df["High"]
+                        low = ticker_df["Low"]
+                        close = ticker_df["Close"]
+                        tr1 = high - low
+                        tr2 = (high - close.shift(1)).abs()
+                        tr3 = (low - close.shift(1)).abs()
+                        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                        atr_series = tr.rolling(14).mean()
+                        latest_atr = float(atr_series.iloc[-1])
+
+                        if initial_atr_stop is None:
+                            initial_atr_stop = avg_entry - (2 * latest_atr)
+                            position_metadata[ticker] = {
+                                "entry_price": avg_entry,
+                                "entry_atr": latest_atr,
+                                "initial_atr_stop": initial_atr_stop,
+                                "entry_date": datetime.now().isoformat()
+                            }
+                            try:
+                                with open(position_metadata_file, "w") as f:
+                                    json.dump(position_metadata, f)
+                            except Exception:
+                                pass
+
+                        # Adjust initial_atr_stop for split if split occurred and stop is pre-split
+                        if split_factor != 1.0 and initial_atr_stop > latest_close * 1.5:
+                            print(f"[Split Adjustment] {ticker}: Adjusting initial ATR stop from {initial_atr_stop:.2f} to {initial_atr_stop / split_factor:.2f}")
+                            initial_atr_stop = initial_atr_stop / split_factor
+                            position_metadata[ticker]["initial_atr_stop"] = initial_atr_stop
+                            try:
+                                with open(position_metadata_file, "w") as f:
+                                    json.dump(position_metadata, f)
+                            except Exception:
+                                pass
+
                         # Check risk exits
                         exit_reason = None
-                        if config.STOP_LOSS_PCT is not None and latest_close <= avg_entry * (1 - config.STOP_LOSS_PCT):
-                            exit_reason = "Stop Loss"
-                        elif config.TAKE_PROFIT_PCT is not None and latest_close >= avg_entry * (1 + config.TAKE_PROFIT_PCT):
-                            exit_reason = "Take Profit"
+                        if latest_close <= initial_atr_stop:
+                            exit_reason = "ATR Stop Loss"
                         elif config.TRAILING_STOP_PCT is not None and latest_close <= current_max * (1 - config.TRAILING_STOP_PCT):
                             exit_reason = "Trailing Stop"
 
                         if exit_reason:
-                            print(f"[Risk Exit] {ticker}: Triggered {exit_reason} at close price ${latest_close:.2f} (Entry: ${avg_entry:.2f})")
+                            print(f"[Risk Exit] {ticker}: Triggered {exit_reason} at close price ${latest_close:.2f} (Entry: ${avg_entry:.2f}, Stop: ${initial_atr_stop:.2f})")
                             submit_order(ticker, int(qty), "sell")
+                            
+                            # Calculate PnL for Sell Notification
+                            pnl = (latest_close - avg_entry) * qty
+                            pnl_pct = (latest_close / avg_entry - 1) * 100.0
+                            
+                            # Get holding days
+                            holding_days = 0
+                            entry_date_str = position_metadata.get(ticker, {}).get("entry_date")
+                            if entry_date_str:
+                                try:
+                                    entry_date = datetime.fromisoformat(entry_date_str)
+                                    holding_days = (datetime.now() - entry_date).days
+                                except Exception:
+                                    pass
+                                    
+                            try:
+                                notify_sell(
+                                    ticker=ticker,
+                                    price=latest_close,
+                                    holding_days=holding_days,
+                                    exit_reason=exit_reason,
+                                    pnl=pnl,
+                                    pnl_pct=pnl_pct,
+                                    portfolio_value=get_account_equity()
+                                )
+                            except Exception as ne:
+                                print(f"[Warning] Failed to send Discord Sell notification: {str(ne)}")
+
                             if ticker in max_prices:
                                 del max_prices[ticker]
                                 try:
@@ -376,6 +527,15 @@ def main():
                                         json.dump(max_prices, f)
                                 except Exception:
                                     pass
+                                    
+                            if ticker in position_metadata:
+                                del position_metadata[ticker]
+                                try:
+                                    with open(position_metadata_file, "w") as f:
+                                        json.dump(position_metadata, f)
+                                except Exception:
+                                    pass
+                                    
                             sell_count += 1
                             last_traded_bar[ticker] = latest_date
                             continue
@@ -400,6 +560,11 @@ def main():
                         if latest_signal == 1:
                             buy_count += 1
                             if current_qty == 0:
+                                # Check Market Regime Filter first!
+                                if not market_bullish:
+                                    print(f"[Scan] Skipping BUY for {ticker} because market regime is Bearish.")
+                                    continue
+
                                 # Portfolio size check:
                                 if len(positions) >= config.MAX_PORTFOLIO_SIZE:
                                     print(f"[Scan] Skipping BUY for {ticker} because portfolio limit is reached ({len(positions)} / {config.MAX_PORTFOLIO_SIZE} positions).")
@@ -419,6 +584,44 @@ def main():
                                 submit_order(ticker, buy_qty, "buy")
                                 last_traded_bar[ticker] = latest_date
                                 
+                                # Calculate ATR(14)
+                                high = ticker_df["High"]
+                                low = ticker_df["Low"]
+                                close = ticker_df["Close"]
+                                tr1 = high - low
+                                tr2 = (high - close.shift(1)).abs()
+                                tr3 = (low - close.shift(1)).abs()
+                                tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                                atr_series = tr.rolling(14).mean()
+                                latest_atr = float(atr_series.iloc[-1])
+                                initial_atr_stop = latest_close - (2 * latest_atr)
+
+                                # Store position metadata
+                                position_metadata[ticker] = {
+                                    "entry_price": latest_close,
+                                    "entry_atr": latest_atr,
+                                    "initial_atr_stop": initial_atr_stop,
+                                    "entry_date": datetime.now().isoformat()
+                                }
+                                try:
+                                    with open(position_metadata_file, "w") as f:
+                                        json.dump(position_metadata, f)
+                                except Exception:
+                                    pass
+
+                                print(f"[ATR Stop] {ticker}: Purchased at ${latest_close:.2f}. Initial ATR Stop: ${initial_atr_stop:.2f}")
+
+                                try:
+                                    notify_buy(
+                                        ticker=ticker,
+                                        price=latest_close,
+                                        shares=buy_qty,
+                                        atr_stop=initial_atr_stop,
+                                        portfolio_value=equity
+                                    )
+                                except Exception as ne:
+                                    print(f"[Warning] Failed to send Discord Buy notification: {str(ne)}")
+
                                 # Update positions dictionary
                                 positions[ticker] = buy_qty
                                 
@@ -430,12 +633,48 @@ def main():
                                 submit_order(ticker, int(current_qty), "sell")
                                 last_traded_bar[ticker] = latest_date
                                 
-                                # Clean up trailing stop tracking
+                                # Calculate PnL for Sell Notification
+                                avg_entry = positions_detailed.get(ticker, {}).get("avg_entry_price", latest_close)
+                                pnl = (latest_close - avg_entry) * current_qty
+                                pnl_pct = (latest_close / avg_entry - 1) * 100.0
+                                
+                                # Get holding days
+                                holding_days = 0
+                                entry_date_str = position_metadata.get(ticker, {}).get("entry_date")
+                                if entry_date_str:
+                                    try:
+                                        entry_date = datetime.fromisoformat(entry_date_str)
+                                        holding_days = (datetime.now() - entry_date).days
+                                    except Exception:
+                                        pass
+
+                                try:
+                                    notify_sell(
+                                        ticker=ticker,
+                                        price=latest_close,
+                                        holding_days=holding_days,
+                                        exit_reason="SMA20 crossed below SMA50",
+                                        pnl=pnl,
+                                        pnl_pct=pnl_pct,
+                                        portfolio_value=get_account_equity()
+                                    )
+                                except Exception as ne:
+                                    print(f"[Warning] Failed to send Discord Sell notification: {str(ne)}")
+
+                                # Clean up trailing stop tracking and metadata
                                 if ticker in max_prices:
                                     del max_prices[ticker]
                                     try:
                                         with open(max_prices_file, "w") as f:
                                             json.dump(max_prices, f)
+                                    except Exception:
+                                        pass
+                                        
+                                if ticker in position_metadata:
+                                    del position_metadata[ticker]
+                                    try:
+                                        with open(position_metadata_file, "w") as f:
+                                            json.dump(position_metadata, f)
                                     except Exception:
                                         pass
                                 

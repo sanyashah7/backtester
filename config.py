@@ -58,3 +58,7 @@ PRICE_CHANGE_THRESHOLD  = 0.50            # Minimum daily price change % (0.5% t
 # ── Optimization Parameters ───────────────────
 LEVERAGE_MULTIPLIER    = 1.0    # Leverage multiplier for position sizing (e.g. 1.0 for 1x cash only)
 
+# ── Discord Integration ────────────────────────
+DISCORD_WEBHOOK_URL    = os.getenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1524343607396405299/_3a_9Q1njbX8YtStO0U4GYiG7XxtqtiKmzn238GBaKW0YBY3_kO9Njn0zizAYCOqRWnA")
+
+

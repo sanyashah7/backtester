@@ -31,7 +31,9 @@ class Portfolio:
                  slippage:   float = 0.0005,
                  stop_loss_pct: float = None,
                  take_profit_pct: float = None,
-                 trailing_stop_pct: float = None):
+                 trailing_stop_pct: float = None,
+                 spy_regime = None,
+                 use_atr_stop: bool = False):
         self.initial_cash = initial_cash
         self.cash         = initial_cash
         self.commission   = commission
@@ -40,6 +42,9 @@ class Portfolio:
         self.stop_loss_pct     = stop_loss_pct
         self.take_profit_pct   = take_profit_pct
         self.trailing_stop_pct = trailing_stop_pct
+        self.spy_regime        = spy_regime
+        self.use_atr_stop      = use_atr_stop
+        self.initial_atr_stop  = 0.0
 
         self.position     = 0.0   # shares currently held
         self.entry_price  = 0.0
@@ -50,8 +55,19 @@ class Portfolio:
         self.trades:       List[Trade] = []
 
     # ──────────────────────────────────────────────────────────────
-    def execute(self, date, price: float, signal: int):
+    def execute(self, date, price: float, signal: int, atr: float = None):
         """Process one bar."""
+        # Check market regime for new buys
+        is_bullish = True
+        if self.spy_regime is not None:
+            dt_key = pd.to_datetime(date).tz_localize(None)
+            if dt_key in self.spy_regime.index:
+                is_bullish = self.spy_regime.loc[dt_key]
+            else:
+                past_dates = self.spy_regime.index[self.spy_regime.index <= dt_key]
+                if not past_dates.empty:
+                    is_bullish = self.spy_regime.loc[past_dates[-1]]
+
         # 1. Update max price since entry if we are holding a position
         if self.position > 0:
             self.max_price_since_entry = max(self.max_price_since_entry, price)
@@ -61,15 +77,30 @@ class Portfolio:
         exit_reason = "Signal"
 
         if self.position > 0:
-            if self.stop_loss_pct is not None and price <= self.entry_price * (1 - self.stop_loss_pct):
-                exit_triggered = True
-                exit_reason = "Stop Loss"
-            elif self.take_profit_pct is not None and price >= self.entry_price * (1 + self.take_profit_pct):
-                exit_triggered = True
-                exit_reason = "Take Profit"
-            elif self.trailing_stop_pct is not None and price <= self.max_price_since_entry * (1 - self.trailing_stop_pct):
-                exit_triggered = True
-                exit_reason = "Trailing Stop"
+            if self.use_atr_stop:
+                # Trailing stop check (5% trailing stop)
+                trailing_stop_price = self.max_price_since_entry * (1 - self.trailing_stop_pct) if self.trailing_stop_pct is not None else 0.0
+                effective_stop = self.initial_atr_stop if self.initial_atr_stop is not None else 0.0
+                
+                if trailing_stop_price > effective_stop:
+                    effective_stop = trailing_stop_price
+                    current_exit_reason = "Trailing Stop"
+                else:
+                    current_exit_reason = "ATR Stop"
+                    
+                if price <= effective_stop:
+                    exit_triggered = True
+                    exit_reason = current_exit_reason
+            else:
+                if self.stop_loss_pct is not None and price <= self.entry_price * (1 - self.stop_loss_pct):
+                    exit_triggered = True
+                    exit_reason = "Stop Loss"
+                elif self.take_profit_pct is not None and price >= self.entry_price * (1 + self.take_profit_pct):
+                    exit_triggered = True
+                    exit_reason = "Take Profit"
+                elif self.trailing_stop_pct is not None and price <= self.max_price_since_entry * (1 - self.trailing_stop_pct):
+                    exit_triggered = True
+                    exit_reason = "Trailing Stop"
 
         # 3. Handle exit if triggered by risk management
         if exit_triggered:
@@ -98,6 +129,13 @@ class Portfolio:
 
             if signal == 1 and self.position == 0:
                 # ── BUY ──────────────────────────────────────────────
+                # Check Market Regime
+                if self.use_atr_stop and not is_bullish:
+                    print("Market regime: Bearish\nSkipping new entries")
+                    return
+                elif self.use_atr_stop:
+                    print("Market regime: Bullish\nBuying allowed")
+
                 shares = self.cash // fill_price
                 cost   = shares * fill_price * (1 + self.commission)
                 if shares > 0 and cost <= self.cash:
@@ -106,6 +144,15 @@ class Portfolio:
                     self.entry_price  = fill_price
                     self.entry_date   = date
                     self.max_price_since_entry = fill_price
+
+                    # Store entry ATR and initial ATR stop
+                    if self.use_atr_stop and atr is not None and not pd.isna(atr):
+                        self.entry_atr = atr
+                        self.initial_atr_stop = fill_price - (2 * atr)
+                        print(f"[{date}] Purchased at ${fill_price:.2f}. Initial ATR Stop: ${self.initial_atr_stop:.2f}")
+                    else:
+                        self.entry_atr = 0.0
+                        self.initial_atr_stop = 0.0
 
             elif signal == -1 and self.position > 0:
                 # ── SELL ─────────────────────────────────────────────

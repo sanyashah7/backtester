@@ -27,6 +27,11 @@ def compute_metrics(equity_df: pd.DataFrame, trades_df: pd.DataFrame,
 
     total_return = (equity.iloc[-1] / initial_cash - 1) * 100
 
+    # Annualised CAGR
+    days = (equity_df.index[-1] - equity_df.index[0]).days
+    years = days / 365.25
+    cagr = (((equity.iloc[-1] / initial_cash) ** (1 / years) - 1) * 100) if years > 0 else 0.0
+
     # Annualised Sharpe Ratio (daily bars → × √252)
     excess   = returns - risk_free_rate / 252
     sharpe   = (excess.mean() / excess.std()) * np.sqrt(252) if excess.std() > 0 else 0.0
@@ -59,6 +64,7 @@ def compute_metrics(equity_df: pd.DataFrame, trades_df: pd.DataFrame,
     return {
         "Final Equity ($)":    round(equity.iloc[-1], 2),
         "Total Return (%)":    round(total_return, 2),
+        "CAGR (%)":            round(cagr, 2),
         "Sharpe Ratio":        round(sharpe, 3),
         "Max Drawdown (%)":    round(max_dd, 2),
         "Calmar Ratio":        round(calmar, 3),

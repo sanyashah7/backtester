@@ -2,3 +2,6 @@ __pycache__/
 .DS_Store
 results/*.png
 tests/__pycache__/
+max_prices.json
+position_metadata.json
+
