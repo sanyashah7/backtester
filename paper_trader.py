@@ -297,11 +297,11 @@ def fetch_alpaca_bars_bulk(tickers: list, timeframe: str, start: str, end: str) 
             for dt, row in cached_df.iterrows():
                 bars_list.append({
                     "t": dt.isoformat(),
-                    "o": row["Open"],
-                    "h": row["High"],
-                    "l": row["Low"],
-                    "c": row["Close"],
-                    "v": row["Volume"]
+                    "o": row["o"],
+                    "h": row["h"],
+                    "l": row["l"],
+                    "c": row["c"],
+                    "v": row["v"]
                 })
             result[ticker] = bars_list
         else:
