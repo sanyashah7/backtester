@@ -31,7 +31,7 @@ SLIPPAGE      = 0.0005          # 0.05 % price impact per trade
 # ── SMA Crossover parameters ──────────────────
 SMA_SHORT             = 20              # fast moving-average window (days)
 SMA_LONG              = 50              # slow moving-average window (days)
-EXIT_BELOW_FAST_SMA   = True            # Exit when price closes below fast SMA
+EXIT_BELOW_FAST_SMA   = False           # Exit when price closes below fast SMA
 
 # ── Risk Management parameters ────────────────
 STOP_LOSS_PCT         = 0.025           # 2.5% hard stop-loss (None to disable)
